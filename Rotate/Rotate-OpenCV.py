@@ -3,6 +3,7 @@ import cv2
 import numpy as np
 import os
 import sys
+from PIL import Image, ImageFilter
 
 debug = sys.gettrace()
 if debug:
@@ -73,4 +74,7 @@ def rotation(img_path, output_path):
     # 关闭所有窗口
     cv2.destroyAllWindows()
 
-mergeImages()
+# mergeImages()
+image = Image.open('Rotate\\Images\\origin\\50000.png')
+img = image.filter(ImageFilter.SHARPEN)
+img.save('sharpened_image.png')
