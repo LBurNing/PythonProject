@@ -1,0 +1,41 @@
+#归并算法 将一个集合拆分成若干个子集合直到集合长度为1递归排序 
+
+def Merg(tArr):
+    if len(tArr) <= 1:
+        return tArr
+    
+    nMid = len(tArr) // 2
+    tLeftArr = tArr[:nMid]
+    tRightArr = tArr[nMid:]
+    Merg(tLeftArr)
+    Merg(tRightArr)
+
+    nI, nJ, nK = 0, 0, 0
+    while nI < len(tLeftArr) and nJ < len(tRightArr):
+        if tLeftArr[nI] < tRightArr[nJ]:
+            tArr[nK] = tLeftArr[nI]
+            nI = nI + 1
+        else:
+            tArr[nK] = tRightArr[nJ]
+            nJ = nJ + 1
+        
+        nK = nK + 1
+    
+    while nI < len(tLeftArr):
+        tArr[nK] = tLeftArr[nI]
+        nI = nI + 1
+        nK = nK + 1
+
+    while nJ < len(tRightArr):
+        tArr[nK] = tRightArr[nJ]
+        nJ = nJ + 1
+        nK = nK + 1
+    
+    return tArr
+
+tAttr = [20,1,52,61,600,100,50,12,30,800,1000]
+tAttr_Sort = Merg(tAttr)
+print(tAttr_Sort)
+
+
+
