@@ -62,6 +62,7 @@ def clip(img_path, out_path):
     return out_path
 
 def blendImages():
+    index = 1
     with concurrent.futures.ThreadPoolExecutor() as executor:
         futures = []
         for i in range(0, len(filePaths)):
@@ -71,6 +72,8 @@ def blendImages():
 
             dir = os.path.dirname(out_path)
             exist = os.path.exists(dir)
+            index = index + 1
+            print("Alpha Blend: ", out_path, " progress: ", index, "/" , len(filePaths), " ", round((index / len(filePaths)) * 100, 2), "%")
 
             if not exist:
                 os.makedirs(dir)
@@ -80,7 +83,5 @@ def blendImages():
                 future.result()
             except Exception as e:
                 print(e)
-
-            print("Alpha Blend: ", future.result())
 
 blendImages()
