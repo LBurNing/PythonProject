@@ -6,8 +6,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\RXCQ\\UI\\新建文件夹'
-    outRoot = 'D:\\RXCQ\\UI\\\新建文件夹\\Blend'
+    pathRoot = 'D:\\WXWork\\Cache\\WXWork\\1688854848508957\\Cache\\File\\2023-05\\翅膀'
+    outRoot = 'D:\\WXWork\\Cache\\WXWork\\1688854848508957\\Cache\\File\\2023-05\\翅膀\\Blend'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -58,6 +58,7 @@ def clip(img_path, out_path):
 
     # 保存处理后的图片
     blendedTex.save(out_path)
+    os.remove(img_path)
     return out_path
 
 def blendImages():
@@ -80,6 +81,6 @@ def blendImages():
             except Exception as e:
                 print(e)
 
-            print("图片去色: ", future.result())
+            print("Alpha Blend: ", future.result())
 
 blendImages()
