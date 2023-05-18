@@ -6,8 +6,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\WXWork\\Cache\\WXWork\\1688854848508957\\Cache\\File\\2023-05\\翅膀'
-    outRoot = 'D:\\WXWork\\Cache\\WXWork\\1688854848508957\\Cache\\File\\2023-05\\翅膀\\Blend'
+    pathRoot = 'D:\\RXCQ\\UI\\Temp'
+    outRoot = 'D:\\RXCQ\\UI\\Temp'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -56,9 +56,9 @@ def clip(img_path, out_path):
             colorTemp = blend_one_one_minus_src_alpha(scrColor, mainTexColor)
             blendedTex.putpixel((x, y), colorTemp)
 
+    os.remove(img_path)
     # 保存处理后的图片
     blendedTex.save(out_path)
-    os.remove(img_path)
     return out_path
 
 def blendImages():
