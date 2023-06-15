@@ -29,13 +29,7 @@ def scaleImage(img_path, out_path):
     # 缩放图片
     img = Image.open(img_path)
     new_size = (int(img.width * scale), int(img.height * scale))
-    img = ImageOps.fit(img, new_size, Image.ANTIALIAS)
-
-    # 创建新的图片对象
-    new_img = Image.new('RGBA', new_size, (0, 0, 0, 0))
-
-    # 将缩放后的图片粘贴到新的图片上，并进行偏移
-    new_img.paste(img, (offset_x, -offset_y))
+    new_img = img.resize(new_size, Image.Resampling.LANCZOS)
 
     # 保存处理后的图片
     new_img.save(out_path)
