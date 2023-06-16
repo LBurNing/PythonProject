@@ -31,7 +31,6 @@ def scaleImage(img_path, out_path):
     new_size = (int(img.width * scale), int(img.height * scale))
     new_img = img.resize(new_size, Image.Resampling.LANCZOS)
 
-    a = 10
     # 创建新的图片对象
     background = Image.new('RGBA', new_size, (0, 0, 0, 0))
 
