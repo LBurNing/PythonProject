@@ -6,8 +6,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\RXCQ\\UI\\新建文件夹'
-    outRoot = 'D:\\RXCQ\\UI\\新建文件夹\\Scale'
+    pathRoot = 'C:\\Users\\lihehui\\Desktop\\100109阶套装\\王者之刃内观\\待机'
+    outRoot = 'C:\\Users\\lihehui\\Desktop\\100109阶套装\\王者之刃内观\\待机\\Scale'
     scale = 0.8
     offset_x = 0
     offset_y = 0
@@ -31,8 +31,14 @@ def scaleImage(img_path, out_path):
     new_size = (int(img.width * scale), int(img.height * scale))
     new_img = img.resize(new_size, Image.Resampling.LANCZOS)
 
+    # 创建新的图片对象
+    background = Image.new('RGBA', new_size, (0, 0, 0, 0))
+
+    # 将缩放后的图片粘贴到新的图片上，并进行偏移
+    background.paste(new_img, (offset_x, -offset_y))
+
     # 保存处理后的图片
-    new_img.save(out_path)
+    background.save(out_path)
     return out_path
 
 def scaleImages():
