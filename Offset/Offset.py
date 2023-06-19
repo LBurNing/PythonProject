@@ -44,8 +44,8 @@ def offsetImage(img_path, out_path):
     y_offset = offsets[1]
 
     # 计算偏移后的新坐标
-    new_x = abs(x_offset) + width * 2
-    new_y = abs(y_offset) + height * 2
+    new_x = abs(x_offset) + width * 2 + 40
+    new_y = abs(y_offset) + height * 2 + 40
     
     # 创建一个新的空白图片，尺寸为偏移后的坐标
     new_image = Image.new("RGBA", (new_x, new_y), (0, 0, 0, 0))
