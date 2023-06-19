@@ -6,8 +6,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\RXCQ\\UI\\Temp'
-    outRoot = 'D:\\RXCQ\\UI\\Temp'
+    pathRoot = 'D:\\RXCQ\\资源\\effect'
+    outRoot = 'D:\\RXCQ\\资源\\effect\\Out'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -67,7 +67,9 @@ def blendImages():
         futures = []
         for i in range(0, len(filePaths)):
             img_path = str(pathRoot + "\\" + filePaths[i])
-            out_path = str(outRoot + "\\" + str.replace(filePaths[i], '.bmp', '.png'))
+            fileName = str.replace(filePaths[i], '.bmp', '.png')
+            fileName = str.replace(fileName, '.BMP', '.png')
+            out_path = str(outRoot + "\\" + fileName)
             futures.append(executor.submit(clip, img_path, out_path))
 
             dir = os.path.dirname(out_path)
