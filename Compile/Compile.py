@@ -1,3 +1,4 @@
+#批量编译.lua文件为字节码
 import subprocess
 import glob
 import os
@@ -8,9 +9,9 @@ from pathlib import Path
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    input_dir = 'D:\\FGCQ\\code\\client\\lua'
-    output_dir = 'D:\\FGCQ\\tools\\luajit2.1\\lua'
-    luajit_directory = r'D:\\FGCQ\\tools\\luajit2.1'
+    input_dir = 'D:\\lua'
+    output_dir = 'D:\\luajit2.1\\lua'
+    luajit_directory = r'D:\\luajit2.1'
 else:
     input_dir = sys.argv[1]
     output_dir = sys.argv[2]

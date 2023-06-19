@@ -1,3 +1,4 @@
+#图片叠加混合 去除带有alpha通道的黑色背景one one_minus_src_alpha
 import sys
 import os
 from PIL import Image

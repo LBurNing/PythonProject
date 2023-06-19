@@ -1,3 +1,4 @@
+#旋转图片并输出
 from PIL import Image, ImageFilter
 import math
 import sys

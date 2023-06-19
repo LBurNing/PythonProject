@@ -1,3 +1,4 @@
+#以中心点为中心 裁切指定大小的图片
 import sys
 import os
 from PIL import Image, ImageOps

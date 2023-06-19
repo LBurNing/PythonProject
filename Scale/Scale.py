@@ -1,3 +1,4 @@
+#缩放图片并输出
 import sys
 import os
 from PIL import Image, ImageOps
