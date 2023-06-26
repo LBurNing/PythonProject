@@ -7,9 +7,9 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\FGCQ\\editor\\SkillEditor\\skill_Data\\Action\\Images\\6\\601643\\1'
-    outRoot = 'D:\\FGCQ\\editor\\SkillEditor\\skill_Data\\Action\\Images\\6\\601643\\1'
-    sharpness_factor = 3.0
+    pathRoot = 'C:\\Users\\lihehui\\Desktop\\2'
+    outRoot = 'C:\\Users\\lihehui\\Desktop\\2\\out'
+    sharpness_factor = 2.0
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]

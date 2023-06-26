@@ -1,0 +1,1 @@
+python main.py "luajit编译出来的字节码"
