@@ -23,7 +23,6 @@ for root, dirs, files in os.walk(pathRoot):
             filePaths.append(os.path.join(root, fileName))
 
 def scaleImage(img_path, out_path):
-    # 缩放图片
     img = Image.open(img_path)
     
     enhancer = ImageEnhance.Sharpness(img)
