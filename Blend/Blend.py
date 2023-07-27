@@ -7,14 +7,16 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\RXCQ\\资源\\effect'
-    outRoot = 'D:\\RXCQ\\资源\\effect\\Out'
+    pathRoot = 'C:\\Users\\lihehui\\Desktop\\特效\\Magic10\\'
+    outRoot = 'C:\\Users\\lihehui\\Desktop\\特效\\Magic10\\'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
     print("Release模式\nreadPath: ", pathRoot, " outPath: ", outRoot)
 
 filePaths = os.listdir(pathRoot)
+
+#D:\UnityHub\Unity2021.3.19f1\Editor\Unity.exe -batchmode -quit -executeMethod GameBuildUtils.PackAll -projectPath D:\FGCQ\code\client\game -logFile unitylog.log
 
 def blend_one_one_minus_src_alpha(src_color, dst_color):
     # 提取源颜色和目标颜色的RGBA分量

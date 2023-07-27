@@ -7,8 +7,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\RXCQ\\资源\\effect\\Out'
-    outRoot = 'D:\\RXCQ\\资源\\effect\\Out\\Offset'
+    pathRoot = 'D:\\RXCQ\\源资源\\createRole\\'
+    outRoot = 'D:\\RXCQ\\源资源\\createRole\\'
     scale = 0.8
     offset_x = 0
     offset_y = 0

@@ -1,14 +1,14 @@
 #缩放图片并输出
 import sys
 import os
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, ImageEnhance
 import concurrent.futures
 
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'C:\\Users\\lihehui\\Desktop\\100109阶套装\\王者之刃内观\\待机'
-    outRoot = 'C:\\Users\\lihehui\\Desktop\\100109阶套装\\王者之刃内观\\待机\\Scale'
+    pathRoot = 'D:\\PythonProject\\Scale\\1'
+    outRoot = 'D:\\PythonProject\\Scale\\1'
     scale = 0.8
     offset_x = 0
     offset_y = 0
@@ -38,8 +38,11 @@ def scaleImage(img_path, out_path):
     # 将缩放后的图片粘贴到新的图片上，并进行偏移
     background.paste(new_img, (offset_x, -offset_y))
 
+    enhancer = ImageEnhance.Sharpness(background)
+    enhanced_image = enhancer.enhance(2.0)
+
     # 保存处理后的图片
-    background.save(out_path)
+    enhanced_image.save(out_path)
     return out_path
 
 def scaleImages():

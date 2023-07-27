@@ -8,8 +8,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\测试资源\\原资源\\Hum\\'
-    outRoot = 'D:\\测试资源\\原资源\\Hum\\Out\\'
+    pathRoot = 'C:\\Users\\lihehui\\Desktop\\特效\\Magic10\\'
+    outRoot = 'C:\\Users\\lihehui\\Desktop\\特效\\Magic10\\'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -43,11 +43,13 @@ def cullBlack(image_path, out_path):
 
     # 将修改后的像素数据更新到图片中
     image.putdata(new_data)
+    os.remove(image_path)
     image.save(out_path)
     return out_path
 
 # 获取符合指定路径模式的文件列表
 file_list = glob.glob(pathRoot + "*.bmp")
+file_list.extend(glob.glob(pathRoot + "*.BMP"))
 
 def cullBlacks():
     index = 1
