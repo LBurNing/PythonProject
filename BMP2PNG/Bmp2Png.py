@@ -8,8 +8,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'C:\\Users\\lihehui\\Desktop\\特效\\Magic10\\'
-    outRoot = 'C:\\Users\\lihehui\\Desktop\\特效\\Magic10\\'
+    pathRoot = 'D:\\RXCQ\\源资源\\magic1\\'
+    outRoot = 'D:\\RXCQ\\源资源\\magic1\\'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -34,7 +34,7 @@ def cullBlack(image_path, out_path):
     new_data = []
     for item in data:
         # 判断当前像素是否为黑色
-        if item[:3] == (0, 0, 0):
+        if item[:3] == (0, 0, 0) or (item[0] < 10 and item[1] < 10 and item[2] < 10):
             # 如果是黑色像素，则将其改为透明
             new_data.append((0, 0, 0, 0))
         else:

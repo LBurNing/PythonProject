@@ -7,17 +7,19 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\PythonProject\\Scale\\1'
-    outRoot = 'D:\\PythonProject\\Scale\\1'
-    scale = 0.8
-    offset_x = 0
-    offset_y = 0
+    pathRoot = 'C:\\Users\\lihehui\\Desktop\\通用\\外观\\待机'
+    outRoot = 'C:\\Users\\lihehui\\Desktop\\通用\\外观\\待机'
+    scale = 1
+    offset_x = -50
+    offset_y = -50
+    dir = 8 #8表示无方向
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
     scale = float(sys.argv[3])
     offset_x = int(sys.argv[4])
     offset_y = int(sys.argv[5])
+    dir = int(sys.argv[6])
     print("Release模式\nreadPath: ", pathRoot, " outPath: ", outRoot)
 
 filePaths = []
@@ -35,14 +37,21 @@ def scaleImage(img_path, out_path):
     # 创建新的图片对象
     background = Image.new('RGBA', new_size, (0, 0, 0, 0))
 
-    # 将缩放后的图片粘贴到新的图片上，并进行偏移
-    background.paste(new_img, (offset_x, -offset_y))
+    fileName = os.path.basename(img_path)
+    if dir == 8 or fileName[:len(str(dir))] == str(dir):
+        background.paste(new_img, (offset_x, -offset_y))
+    else:
+        background.paste(new_img, (0, 0))
 
-    enhancer = ImageEnhance.Sharpness(background)
-    enhanced_image = enhancer.enhance(2.0)
+    if scale != 1:
+        enhancer = ImageEnhance.Sharpness(background)
+        enhanced_image = enhancer.enhance(2.0)
 
-    # 保存处理后的图片
-    enhanced_image.save(out_path)
+        # 保存处理后的图片
+        enhanced_image.save(out_path)
+    else:
+        background.save(out_path)
+
     return out_path
 
 def scaleImages():
