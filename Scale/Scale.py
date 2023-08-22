@@ -12,7 +12,7 @@ if debug:
     scale = 1
     offset_x = -50
     offset_y = -50
-    dir = 8 #8表示无方向
+    dir = 9 #8表示无方向
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -38,7 +38,7 @@ def scaleImage(img_path, out_path):
     background = Image.new('RGBA', new_size, (0, 0, 0, 0))
 
     fileName = os.path.basename(img_path)
-    if dir == 8 or fileName[:len(str(dir))] == str(dir):
+    if dir == 9 or fileName[:len(str(dir))] == str(dir):
         background.paste(new_img, (offset_x, -offset_y))
     else:
         background.paste(new_img, (0, 0))
