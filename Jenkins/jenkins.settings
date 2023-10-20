@@ -1,0 +1,25 @@
+pipeline {
+    agent any
+    stages {
+        stage('打包') {
+            when { environment name: '打包', value: 'true' } 
+            steps {
+                  echo '打包'
+            }
+        }
+
+        stage('DebugIP') {
+            when { environment name: 'DebugIP', value: 'true' } 
+            steps {
+                  bat 'ipconfig'
+            }
+        }
+        
+        stage('JenkinsTest') {
+            when { environment name: 'JenkinsTest', value: 'true' } 
+            steps {
+                  bat 'D:\\UnityHub\\Unity2021.3.19f1\\Unity2021.3.19f1\\Editor\\Unity.exe -batchmode -quit -executeMethod JenkinsTest.Test -projectPath D:\\FGCQ3\\artwork\\gui -logFile D:\\FGCQ3\\artwork\\gui\\log.txt'
+            }
+        }
+    }
+  }
