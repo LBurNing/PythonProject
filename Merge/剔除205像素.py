@@ -1,4 +1,15 @@
-from PIL import Image
+import os
+import sys
+from PIL import Image, ImageOps, ImageEnhance
+
+debug = sys.gettrace()
+if debug:
+    # 指定输入图像和输出路径
+    input_image_path = "C:\\Users\\lihehui\\Desktop\\out\\7.jpg"
+    output_image_path = "C:\\Users\\lihehui\\Desktop\\out\\7_1.png"
+else:
+    input_image_path = sys.argv[1]
+    output_image_path = sys.argv[2]
 
 def replace_white_with_black(image_path, output_path):
     # 打开图像
@@ -20,9 +31,6 @@ def replace_white_with_black(image_path, output_path):
     # 保存修改后的图像
     image.save(output_path)
 
-# 指定输入图像和输出路径
-input_image_path = "C:\\Users\\lihehui\\Desktop\\out\\7.jpg"
-output_image_path = "C:\\Users\\lihehui\\Desktop\\out\\7_1.png"
 
 # 执行替换操作
 replace_white_with_black(input_image_path, output_image_path)

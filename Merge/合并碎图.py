@@ -1,21 +1,28 @@
-from PIL import Image
 import os
+import sys
+from PIL import Image, ImageOps, ImageEnhance
 
-# 设置图片文件夹路径和输出路径
-image_folder = 'C:\\Users\\lihehui\\Desktop\\png'
-output_path = os.path.join("C:\\Users\\lihehui\\Desktop\\out", '4.jpg')
+debug = sys.gettrace()
+if debug:
+    print("Debug模式\n")
+    image_folder = 'C:\\Users\\lihehui\\Desktop\\png'
+    output_path = os.path.join("C:\\Users\\lihehui\\Desktop\\out", '4.jpg')
+    # 设置每行和每列的图片数量
+    num_columns = 55
+    num_rows = 60
+    # 设置单个图片的大小
+    image_width = 96  # 你可以根据实际情况调整图片大小
+    image_height = 64
+else:
+    image_folder = sys.argv[1]
+    output_path = sys.argv[2]
+    num_columns = int(sys.argv[3])
+    num_rows = int(sys.argv[4])
+    image_width = int(sys.argv[5])
+    image_height = int(sys.argv[6])
 
 # 获取图片列表并按文件名排序
 image_files = sorted([f for f in os.listdir(image_folder) if f.endswith('.PNG')], key=lambda x: int(x.split('.')[0]))
-
-# 设置每行和每列的图片数量
-num_columns = 55
-num_rows = 60
-
-# 设置单个图片的大小
-image_width = 96  # 你可以根据实际情况调整图片大小
-image_height = 64
-
 # 创建一个新的大图
 result_image = Image.new('RGB', (num_columns * image_width, num_rows * image_height))
 
@@ -30,5 +37,4 @@ for i, image_file in enumerate(image_files):
 
 # 保存拼接后的大图
 result_image.save(output_path)
-
 print(f"拼接完成，保存为 {output_path}")
