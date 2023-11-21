@@ -54,6 +54,6 @@ def gen_png_from_plist(plist_filename, png_filename):
         print(outfile, "generated")
         result_image.save(outfile)
 
-plistPath = "E:\PKM2PNG-main\png2pkm\png2pkm-master\pvr\plist.plist"
-pngPath = "E:\PKM2PNG-main\png2pkm\png2pkm-master\pvr\sheet.png"
+plistPath = "E:\plist\monster_50125_0_0_0.plist"
+pngPath = "E:\plist\monster_50125_0_0_0.png"
 gen_png_from_plist(plistPath, pngPath)
