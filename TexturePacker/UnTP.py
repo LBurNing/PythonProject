@@ -19,7 +19,7 @@ index2name_mapping = {
     1: "走路",
     2: "攻击",
     3: "3未知",
-    4: "4未知",
+    4: "死亡",
     5: "5未知",
     6: "6未知",
     7: "受击",
@@ -27,20 +27,11 @@ index2name_mapping = {
 
 debug = sys.gettrace()
 if debug:
-    plist_dir = "E:\plist"
+    plist_dir = "E:\\plist\\怪物模型"
 else:
     plist_dir = sys.argv[1]
 
 def gen_png_from_plist(plist_filename, png_filename):
-    # 提取规则中的数字部分
-    filename_parts = os.path.splitext(os.path.basename(plist_filename))[0].split('_')
-    main_folder = f"monster_{filename_parts[1]}"
-    sub_folder = f"{filename_parts[3]}"
-    sub_folder = index2name_mapping[int(sub_folder)]
-
-    file_path = os.path.join(os.path.dirname(plist_filename), main_folder, sub_folder)
-    big_image = Image.open(png_filename)
-
     # 打开要读取的.plist文件
     with open(plist_filename, 'rb') as file:
         # 调用load方法来解析.plist文件
@@ -51,8 +42,17 @@ def gen_png_from_plist(plist_filename, png_filename):
     to_int = lambda x: int(x)
     for frame in frames:
         framename = frame.replace('.png', '')
-        index = substring = framename.split('_')[-2]
-        substring = framename.split('_')[-1]
+
+        # 提取规则中的数字部分
+        filename_parts = framename.split('_')
+        main_folder = f"monster_{filename_parts[1]}"
+        sub_folder = f"{filename_parts[3]}"
+        sub_folder = index2name_mapping[int(sub_folder)]
+        file_path = os.path.join(os.path.dirname(plist_filename) + "\\out\\", main_folder, sub_folder)
+        big_image = Image.open(png_filename)
+
+        index = substring = filename_parts[-2]
+        substring = filename_parts[-1]
         framename = direction_mapping[int(index)] * 10000 + int(substring)
 
         size = frames[frame]['sourceColorRect']
