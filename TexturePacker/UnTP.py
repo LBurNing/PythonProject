@@ -49,12 +49,18 @@ def gen_png_from_plist(plist_filename, png_filename):
         sub_folder = f"{filename_parts[3]}"
         sub_folder = index2name_mapping[int(sub_folder)]
         file_path = os.path.join(os.path.dirname(plist_filename) + "\\out\\", main_folder, sub_folder)
-        big_image = Image.open(png_filename)
-
         index = substring = filename_parts[-2]
         substring = filename_parts[-1]
         framename = direction_mapping[int(index)] * 10000 + int(substring)
 
+        if not os.path.isdir(file_path):
+            os.makedirs(file_path)
+
+        outfile = os.path.join(file_path, str(framename) + '.png')
+        if os.path.exists(outfile):
+            continue
+
+        big_image = Image.open(png_filename)
         size = frames[frame]['sourceColorRect']
         size = to_list(size)
         size = list(map(to_int, size))
@@ -92,13 +98,6 @@ def gen_png_from_plist(plist_filename, png_filename):
         if frames[frame]['rotated']:
             rect_on_big = rect_on_big.transpose(Image.ROTATE_90)
         result_image.paste(rect_on_big)
-
-        if not os.path.isdir(file_path):
-            os.makedirs(file_path)
-
-        outfile = os.path.join(file_path, str(framename) + '.png')
-        if os.path.exists(outfile):
-            continue
         
         print(outfile, "generated")
 
@@ -108,8 +107,8 @@ def gen_png_from_plist(plist_filename, png_filename):
         y_offset = offset[1]
 
         # 计算偏移后的新坐标
-        new_x = abs(x_offset) + width * 2 + 40
-        new_y = abs(y_offset) + height * 2 + 40
+        new_x = abs(x_offset) + width * 2 + 200
+        new_y = abs(y_offset) + height * 2 + 200
         
         # 创建一个新的空白图片，尺寸为偏移后的坐标
         new_image = Image.new("RGBA", (new_x, new_y), (0, 0, 0, 0))
