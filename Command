@@ -1,3 +1,1 @@
 pyinstaller -F --distpath D:\FGCQ3\editor\ImageTools\Tools d:\PythonProject\Blend\Blend.py
-
-打包命令
