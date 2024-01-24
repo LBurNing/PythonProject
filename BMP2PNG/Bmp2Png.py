@@ -8,8 +8,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\RXCQ\\源资源\\magic1\\'
-    outRoot = 'D:\\RXCQ\\源资源\\magic1\\'
+    pathRoot = r'C:\Users\lihehui\Desktop\水龙雷\\'
+    outRoot = r'C:\Users\lihehui\Desktop\水龙雷\\'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -50,6 +50,7 @@ def cullBlack(image_path, out_path):
 # 获取符合指定路径模式的文件列表
 file_list = glob.glob(pathRoot + "*.bmp")
 file_list.extend(glob.glob(pathRoot + "*.BMP"))
+file_list.extend(glob.glob(pathRoot + "*.PNG"))
 
 def cullBlacks():
     index = 1
