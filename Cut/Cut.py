@@ -7,10 +7,10 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\测试资源\\头盔\\待机'
-    outRoot = 'D:\\测试资源\\头盔\\待机\\Cut'
-    w = 200
-    h = 150
+    pathRoot = r'C:\Users\lihehui\Desktop\西游怪物\西游怪物102白狐妖\待机'
+    outRoot = r'C:\Users\lihehui\Desktop\西游怪物\西游怪物102白狐妖\待机'
+    w = 1500
+    h = 1500
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -19,17 +19,27 @@ else:
     print("Release模式\nreadPath: ", pathRoot, " outPath: ", outRoot)
 
 filePaths = []
-for root, dirs, files in os.walk(pathRoot):
-    for fileName in files:
-        if fileName.endswith('.png') or fileName.endswith('.PNG'):
-            filePaths.append(os.path.join(root, fileName))
+def get_png_files(path):
+    png_files = []
+    for root, dirs, files in os.walk(path):
+        for dirName in dirs:
+            dirPath = os.path.join(root, dirName)
+            png_files.extend(get_png_files(dirPath))  # 递归获取子目录中的PNG文件路径
+        for fileName in files:
+            if fileName.endswith('.png') or fileName.endswith('.PNG'):
+                filePath = os.path.join(root, fileName)
+                png_files.append(filePath)
+    return png_files
 
+filePaths = get_png_files(pathRoot)
 def cutImage(img_path, out_path):
     # 打开图片
     img = Image.open(img_path)
 
     # 获取图片尺寸
     width, height = img.size
+    if width <= w and height <= h:
+        return "不需要裁切, " + f"img_path: {img_path}, width: {width}, height: {height}"
 
     # 设置裁切区域中心点坐标和宽高
     x = width / 2
@@ -53,7 +63,7 @@ def cutImages():
         futures = []
         for i in range(0, len(filePaths)):
             img_path = filePaths[i]
-            out_path = outRoot + "\\" + os.path.basename(img_path)
+            out_path = img_path #outRoot + "\\" + os.path.basename(img_path)
             futures.append(executor.submit(cutImage, img_path, out_path))
 
             dir = os.path.dirname(out_path)
