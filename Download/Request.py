@@ -1,7 +1,7 @@
 import requests
 from bs4 import BeautifulSoup
 
-url = "http://hscdn.dhsf.xqhuyu.com/dhsf/box_res/anim/effect"
+url = "https://cdn-bz2.jikewan.com/cqwjcq/0/map/1-26zhudong/image"
 response = requests.get(url)
 
 if response.status_code == 200:

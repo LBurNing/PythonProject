@@ -16,6 +16,7 @@ playerUrlTemplete = "http://hscdn.dhsf.xqhuyu.com/dhsf/box_res/anim/player/playe
 shieldUrlTemplete ="http://hscdn.dhsf.xqhuyu.com/dhsf/box_res/anim/shield/shield_{0}_{1}_{2}.png"
 weaponUrlTemplete ="http://hscdn.dhsf.xqhuyu.com/dhsf/box_res/anim/weapon/weapon_{0}_{1}_{2}.png"
 wingsUrlTemplete ="http://hscdn.dhsf.xqhuyu.com/dhsf/box_res/anim/wings/wings_{0}_{1}_{2}.png"
+mapUrlTemplete = "https://cdn-bz2.jikewan.com/cqwjcq/0/map/3-1srsimiao1ceng/image/{0}_{1}.jpg"
 
 output_folder = "E:\PKM2PNG-main\png2pkm\\res\\龙渊迷失"  # 指定输出文件夹路径
 
@@ -50,6 +51,15 @@ def effectUrlList(url_template):
     
     return file_list
 
+def mapUrlList(url_template):
+    file_list = []
+    for x in range(0, 40):  # 0-1000
+        for y in range(0, 40):  # 0-10
+            url = url_template.format(x, y)
+            file_list.append(url)
+    
+    return file_list
+
 def downloadFile(url):
     fileName = os.path.basename(url)
     output_path = os.path.join(output_folder, fileName)  # 构建输出文件路径
@@ -70,13 +80,14 @@ def download():
         os.makedirs(output_folder)  # 如果输出文件夹不存在，创建它
 
     # urls = effectUrlList(effectUrlTemplete)
-    urls = unitUrlList(playerUrlTemplete)
+    # urls = unitUrlList(playerUrlTemplete)
     # urls = unitUrlList(hairUrlTemplete)
     # urls = unitUrlList(monsterUrlTemplete)
     # urls = unitUrlList(npcUrlTemplete)
     # urls = unitUrlList(shieldUrlTemplete)
     # urls = unitUrlList(weaponUrlTemplete)
     # urls = unitUrlList(wingsUrlTemplete)
+    urls = mapUrlList(mapUrlTemplete)
 
     for url in urls:
         threads = []
