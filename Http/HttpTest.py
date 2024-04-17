@@ -1,9 +1,9 @@
 import requests
-upload_url = 'http://localhost:8001/upload'
+url = 'http://localhost:8001/files/'
 
 def upload(file_path):
     files = {'file': (file_path, open(file_path, 'rb'))}
-    response = requests.post(upload_url, files=files)
+    response = requests.post(url, files=files)
     print(response.text)
 
 def download(resource_url):
@@ -19,4 +19,4 @@ def download(resource_url):
         print('Failed to download the resource')
 
 upload('main.ui')
-download('http://localhost:8001/downloads/下载.txt')
+download(url + 'download.txt')
