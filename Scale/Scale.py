@@ -7,11 +7,11 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'C:\\Users\\lihehui\\Desktop\\通用\\外观\\待机'
-    outRoot = 'C:\\Users\\lihehui\\Desktop\\通用\\外观\\待机'
-    scale = 1
-    offset_x = -50
-    offset_y = -50
+    pathRoot = r'C:\Users\lihehui\Desktop\时装-剑甲新增\时装-剑甲新增\时装-剑甲10\武器内观'
+    outRoot = r'C:\Users\lihehui\Desktop\时装-剑甲新增\时装-剑甲新增\时装-剑甲10\武器内观\out'
+    scale = 0.15
+    offset_x = 0
+    offset_y = 0
     dir = 9 #8表示无方向
 else:
     pathRoot = sys.argv[1]
@@ -32,6 +32,11 @@ def scaleImage(img_path, out_path):
     # 缩放图片
     img = Image.open(img_path)
     new_size = (int(img.width * scale), int(img.height * scale))
+    if new_size[0] % 2 != 0:
+        new_size[0] -= 1
+    if new_size[1] % 2 != 0:
+        new_size[1] -= 1
+
     new_img = img.resize(new_size, Image.Resampling.LANCZOS)
 
     # 创建新的图片对象
