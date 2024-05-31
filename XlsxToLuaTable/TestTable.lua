@@ -19,6 +19,7 @@ local __key__ = {
    skillOpens = 8,
    skillDesc = 9,
    cds = 10,
+   
 }
 
 local __index__ = {10086,10087,10088,10089,10090}
