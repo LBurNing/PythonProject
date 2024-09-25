@@ -8,8 +8,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = r'C:\Users\lihehui\Desktop\水龙雷\\'
-    outRoot = r'C:\Users\lihehui\Desktop\水龙雷\\'
+    pathRoot = r'C:\Users\lihehui\Desktop\聊天表情（放大版）\聊天表情（放大版）\BrowIco表情包\\'
+    outRoot = r'C:\Users\lihehui\Desktop\聊天表情（放大版）\聊天表情（放大版）\BrowIco表情包\\'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
@@ -51,6 +51,7 @@ def cullBlack(image_path, out_path):
 file_list = glob.glob(pathRoot + "*.bmp")
 file_list.extend(glob.glob(pathRoot + "*.BMP"))
 file_list.extend(glob.glob(pathRoot + "*.PNG"))
+file_list.extend(glob.glob(pathRoot + "*.png"))
 
 def cullBlacks():
     index = 1
