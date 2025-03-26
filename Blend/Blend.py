@@ -7,8 +7,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'D:\\RXCQ\\源资源\\magic\\'
-    outRoot = 'D:\\RXCQ\\源资源\\magic\\'
+    pathRoot = r'C:\Users\lihehui\Desktop\怒气(1)\怒气\\'
+    outRoot = r'C:\Users\lihehui\Desktop\怒气(1)\怒气\\'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]

@@ -2,12 +2,13 @@ import os
 import sys
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 import numpy as np
+Image.MAX_IMAGE_PIXELS = None
 
 debug = sys.gettrace()
 if debug:
     # 指定输入图像和输出路径
-    input_image_path = r"C:\Users\lihehui\Desktop\2023-11-27MAP\2023-11-27MAP\Maps\map\tiles\New_1 (10)\New_1 (10).jpg"
-    output_image_path = r"C:\Users\lihehui\Desktop\2023-11-27MAP\2023-11-27MAP\Maps\map\tiles\New_1 (10)\New_1 (10)_out1.jpg"
+    input_image_path = r"C:\Users\lihehui\Desktop\1\幽冥\Maps\map\tiles\56098\56098.jpg"
+    output_image_path = r"C:\Users\lihehui\Desktop\1\幽冥\Maps\map\tiles\56098\56098_out.jpg"
 else:
     input_image_path = sys.argv[1]
     output_image_path = sys.argv[2]
