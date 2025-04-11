@@ -7,8 +7,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = r'C:\Users\lihehui\Desktop\时装-剑甲新增\时装-剑甲新增\时装-剑甲10\武器内观'
-    outRoot = r'C:\Users\lihehui\Desktop\时装-剑甲新增\时装-剑甲新增\时装-剑甲10\武器内观\out'
+    pathRoot = r'E:\wl2\editor\ImageTools\10062'
+    outRoot = r'E:\wl2\editor\ImageTools\10062\out'
     scale = 0.15
     offset_x = 0
     offset_y = 0
@@ -32,11 +32,13 @@ def scaleImage(img_path, out_path):
     # 缩放图片
     img = Image.open(img_path)
     new_size = (int(img.width * scale), int(img.height * scale))
+    new_size = list(new_size)  # 转成可变 list
     if new_size[0] % 2 != 0:
         new_size[0] -= 1
     if new_size[1] % 2 != 0:
         new_size[1] -= 1
 
+    new_size = tuple(new_size) 
     new_img = img.resize(new_size, Image.Resampling.LANCZOS)
 
     # 创建新的图片对象
@@ -50,7 +52,7 @@ def scaleImage(img_path, out_path):
 
     if scale != 1:
         enhancer = ImageEnhance.Sharpness(background)
-        enhanced_image = enhancer.enhance(2.0)
+        enhanced_image = enhancer.enhance(1.5)
 
         # 保存处理后的图片
         enhanced_image.save(out_path)
