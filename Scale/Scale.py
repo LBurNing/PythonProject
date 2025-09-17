@@ -7,9 +7,9 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = r'E:\wl2\editor\ImageTools\10062'
-    outRoot = r'E:\wl2\editor\ImageTools\10062\out'
-    scale = 0.15
+    pathRoot = r'D:\UnityProject\AttackBoss\Assets\Res\Textures\Animation\Effect\500052'
+    outRoot = r'D:\UnityProject\AttackBoss\Assets\Res\Textures\Animation\Effect\500052'
+    scale = 1.1764
     offset_x = 0
     offset_y = 0
     dir = 9 #8表示无方向
@@ -50,14 +50,14 @@ def scaleImage(img_path, out_path):
     else:
         background.paste(new_img, (0, 0))
 
-    if scale != 1:
-        enhancer = ImageEnhance.Sharpness(background)
-        enhanced_image = enhancer.enhance(1.5)
+    # if scale != 1:
+    #     enhancer = ImageEnhance.Sharpness(background)
+    #     enhanced_image = enhancer.enhance(1.5)
 
-        # 保存处理后的图片
-        enhanced_image.save(out_path)
-    else:
-        background.save(out_path)
+    #     # 保存处理后的图片
+    #     enhanced_image.save(out_path)
+    # else:
+    background.save(out_path)
 
     return out_path
 

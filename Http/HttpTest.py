@@ -19,4 +19,4 @@ def download(resource_url):
         print('Failed to download the resource')
 
 upload('main.ui')
-download(url + 'download.txt')
+download(url + '28d08a56d4398066.webgl.data.unityweb.bin.txt')
