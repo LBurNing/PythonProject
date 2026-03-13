@@ -8,9 +8,9 @@ if debug:
     print("Debug模式\n")
     # 获取当前工作路径
     current_dir = os.getcwd()
-    versions_file = os.path.join(r'E:\yuyan\code\client\game\version', 'versions.txt')
-    new_version_file = os.path.join(r'E:\yuyan\code\client\game\version', 'newVersion.txt')
-    output_version_file = os.path.join(r'E:\yuyan\code\client\game\version', 'android', 'versions.txt')
+    versions_file = os.path.join(r'E:\huanpi\code\client\game\version', 'versions.txt')
+    new_version_file = os.path.join(r'E:\huanpi\code\client\game\version', 'newVersion.txt')
+    output_version_file = os.path.join(r'E:\huanpi\code\client\game\version', 'android', 'versions.txt')
 else:
     try:
         # 获取当前工作路径

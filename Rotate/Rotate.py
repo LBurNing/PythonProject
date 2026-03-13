@@ -7,8 +7,8 @@ import os
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = 'Rotate\\Images\\origin'
-    outRoot = 'Rotate\\Images\\Rotate'
+    pathRoot = r'D:\UnityProject\AttackBoss\Assets\Res\Textures\Animation\Effect\500382'
+    outRoot = r'D:\UnityProject\AttackBoss\Assets\Res\Textures\Animation\Effect\500382'
     angle = -50
     type = 2
 else:

@@ -12,6 +12,13 @@ direction_mapping = {
     5: 6,
     6: 7,
     7: 8,
+    8: 9,
+    9: 10,
+    10: 11,
+    11: 12,
+    12: 13,
+    13: 14,
+    14: 15,
 }
 
 index2name_mapping = {
@@ -23,11 +30,19 @@ index2name_mapping = {
     5: "5未知",
     6: "6未知",
     7: "受击",
+    8: "8未知",
+    9: "9未知",
+    10: "10未知",
+    11: "11未知",
+    12: "12未知",
+    13: "13未知",
+    14: "14未知",
+    15: "15未知",
 }
 
 debug = sys.gettrace()
 if debug:
-    plist_dir = "E:\\plist\\怪物模型"
+    plist_dir = r"C:\Users\lihehui\Desktop\22297\外观"
 else:
     plist_dir = sys.argv[1]
 

@@ -7,10 +7,10 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = r'C:\Users\lihehui\Desktop\西游怪物\西游怪物102白狐妖\待机'
-    outRoot = r'C:\Users\lihehui\Desktop\西游怪物\西游怪物102白狐妖\待机'
-    w = 1500
-    h = 1500
+    pathRoot = r'C:\Users\lihehui\Desktop\传奇资源\精灵土拨鼠\修正后的PNG资源\精灵土拨鼠\1\2'
+    outRoot = r'C:\Users\lihehui\Desktop\传奇资源\精灵土拨鼠\修正后的PNG资源\精灵土拨鼠\1\2'
+    w = 400
+    h = 400
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]

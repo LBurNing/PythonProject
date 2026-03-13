@@ -1,60 +1,100 @@
+# 以全局中心点为中心裁切最大像素区域
 import sys
 import os
 from PIL import Image
+import concurrent.futures
 
-# ---------------- Debug/Release 区分 ----------------
-debug = sys.gettrace()  # True 表示在调试器下运行
-
+debug = sys.gettrace()
 if debug:
-    print("Debug模式")
-    pathRoot = r'D:\WXWork\Cache\WXWork\1688858110580230\Cache\File\2025-09\英灵2\修正后的PNG资源\61040\1\1'
-    outRoot = os.path.join(pathRoot, "out")
+    print("Debug模式\n")
+    pathRoot = r'D:\WXWork\Cache\WXWork\1688858110580230\Cache\File\2025-09\英灵2\61040'
+    outRoot = pathRoot + r"\out"
 else:
-    if len(sys.argv) < 3:
-        print("Release模式需要传入参数: 输入路径 输出路径")
-        sys.exit(1)
-
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
     print("Release模式\nreadPath:", pathRoot, " outPath:", outRoot)
 
 os.makedirs(outRoot, exist_ok=True)
 
-# ---------------- 裁剪并对齐序列帧 ----------------
-frames_info = []  # [(filename, cropped_img, left, top, right, bottom)]
+# ---------------- 获取所有 PNG ----------------
+def get_png_files(path):
+    png_files = []
+    for root, dirs, files in os.walk(path):
+        for fileName in files:
+            if fileName.lower().endswith('.png'):
+                filePath = os.path.join(root, fileName)
+                png_files.append(filePath)
+    return png_files
 
-for filename in sorted(os.listdir(pathRoot)):
-    if not filename.lower().endswith(".png"):
-        continue
+filePaths = get_png_files(pathRoot)
 
-    path = os.path.join(pathRoot, filename)
-    img = Image.open(path).convert("RGBA")
+# ---------------- 计算全局 bbox ----------------
+bboxes = {}
+min_left, min_top = float("inf"), float("inf")
+max_right, max_bottom = 0, 0
+
+for f in filePaths:
+    img = Image.open(f).convert("RGBA")
     bbox = img.getbbox()
-    if not bbox:
-        continue
+    if bbox:
+        left, top, right, bottom = bbox
+        bboxes[f] = bbox
+        min_left = min(min_left, left)
+        min_top = min(min_top, top)
+        max_right = max(max_right, right)
+        max_bottom = max(max_bottom, bottom)
+    else:
+        bboxes[f] = None  # 全透明
 
-    left, top, right, bottom = bbox
-    cropped = img.crop(bbox)
-    frames_info.append((filename, cropped, left, top, right, bottom))
+# 全局宽高（保证偶数）
+w = (max_right - min_left)
+h = (max_bottom - min_top)
+w += w % 2
+h += h % 2
 
-# 计算统一画布尺寸（最小包围）
-min_left = min(f[2] for f in frames_info)
-min_top = min(f[3] for f in frames_info)
-max_right = max(f[4] for f in frames_info)
-max_bottom = max(f[5] for f in frames_info)
+print(f"统一裁切区域: {w}x{h}")
 
-canvas_width = max_right - min_left
-canvas_height = max_bottom - min_top
+# ---------------- 裁切函数 ----------------
+def cutImage(img_path, out_path):
+    if bboxes[img_path] is None:
+        return "跳过全透明: " + img_path
 
-print(f"统一画布大小: {canvas_width}x{canvas_height}")
+    img = Image.open(img_path).convert("RGBA")
+    width, height = img.size
+    # 设置裁切区域中心点坐标和宽高
+    x = width / 2
+    y = height / 2
 
-# 生成最终帧
-for filename, cropped, left, top, right, bottom in frames_info:
-    new_img = Image.new("RGBA", (canvas_width, canvas_height), (0, 0, 0, 0))
-    paste_x = left - min_left
-    paste_y = top - min_top
-    new_img.paste(cropped, (paste_x, paste_y))
-    out_path = os.path.join(outRoot, filename)
-    new_img.save(out_path)
+    # 以全局中心点为基准裁切
+    left = x - w / 2
+    top = y - h / 2
+    right = x + w / 2
+    bottom = y + h / 2
 
-print("序列帧裁切完成，已保存到:", outRoot)
+    # 保证不超过图片边界
+    left = max(0, left)
+    top = max(0, top)
+    right = min(width, right)
+    bottom = min(height, bottom)
+
+    img_crop = img.crop((left, top, right, bottom))
+    img_crop.save(out_path)
+    return out_path
+
+# ---------------- 多线程批处理 ----------------
+def cutImages():
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = []
+        for img_path in filePaths:
+            out_path = os.path.join(outRoot, os.path.basename(img_path))
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            futures.append(executor.submit(cutImage, img_path, out_path))
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                result = future.result()
+                print("图片裁切完成:", result)
+            except Exception as e:
+                print("裁切出错:", e)
+
+cutImages()
