@@ -7,8 +7,8 @@ Image.MAX_IMAGE_PIXELS = None
 debug = sys.gettrace()
 if debug:
     # 指定输入图像和输出路径
-    input_image_path = r"C:\Users\lihehui\Desktop\MapPng\dongtai112.png"
-    output_image_path = r"C:\Users\lihehui\Desktop\MapPng\dongtai112.png"
+    input_image_path = r"C:\Users\lihehui\Desktop\Map\DT088-时空迷城\集中六层\Maps\map\tiles\BOSS时空迷城\BOSS时空迷城.png"
+    output_image_path = r"C:\Users\lihehui\Desktop\Map\DT088-时空迷城\集中六层\Maps\map\tiles\BOSS时空迷城\BOSS时空迷城.png"
 else:
     input_image_path = sys.argv[1]
     output_image_path = sys.argv[2]
