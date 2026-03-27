@@ -3,12 +3,13 @@ import sys
 import os
 from PIL import Image
 import concurrent.futures
+Image.MAX_IMAGE_PIXELS = None
 
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = r'C:\Users\lihehui\Desktop\怒气(1)\怒气\\'
-    outRoot = r'C:\Users\lihehui\Desktop\怒气(1)\怒气\\'
+    pathRoot = r'C:\Users\lihehui\Desktop\Map\地狱烈焰系列五dt02层\地狱烈焰系列五层\smTiles132'
+    outRoot = r'C:\Users\lihehui\Desktop\Map\地狱烈焰系列五dt02层\地狱烈焰系列五层\smTiles132'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]

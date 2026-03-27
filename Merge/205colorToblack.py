@@ -7,8 +7,8 @@ Image.MAX_IMAGE_PIXELS = None
 debug = sys.gettrace()
 if debug:
     # 指定输入图像和输出路径
-    input_image_path = r"C:\Users\lihehui\Desktop\1\幽冥\Maps\map\tiles\56098\56098.jpg"
-    output_image_path = r"C:\Users\lihehui\Desktop\1\幽冥\Maps\map\tiles\56098\56098_out.jpg"
+    input_image_path = r"C:\Users\lihehui\Desktop\MapPng\dongtai112.png"
+    output_image_path = r"C:\Users\lihehui\Desktop\MapPng\dongtai112.png"
 else:
     input_image_path = sys.argv[1]
     output_image_path = sys.argv[2]
