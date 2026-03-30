@@ -22,7 +22,6 @@ def replace_color(image_path, output_path, target_color=(205, 205, 205), replace
 
     # 将图像转换为NumPy数组
     img_array = np.array(image)
-
     # 定义目标颜色的条件
     target_color_condition = (img_array[:, :, 0] == target_color[0]) & \
                              (img_array[:, :, 1] == target_color[1]) & \
