@@ -8,8 +8,8 @@ import concurrent.futures
 debug = sys.gettrace()
 if debug:
     print("Debug模式\n")
-    pathRoot = r'C:\Users\lihehui\Desktop\Map\塞外\Map\关外\Objects250\\'
-    outRoot = r'C:\Users\lihehui\Desktop\Map\塞外\Map\关外\Objects250\\out\\'
+    pathRoot = r'C:\\Users\\lihehui\\Desktop\\Map\\战纪系列传战9层妖塔\\Tiles169\\'
+    outRoot = r'C:\\Users\\lihehui\\Desktop\\Map\\战纪系列传战9层妖塔\\Tiles169\\'
 else:
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]

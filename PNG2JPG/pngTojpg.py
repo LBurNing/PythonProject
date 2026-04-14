@@ -5,8 +5,8 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None
 
 # 输入输出路径
-input_folder = r"C:\Users\lihehui\Desktop\MapPng"
-output_folder = r"C:\Users\lihehui\Desktop\MapPng\JPG"
+input_folder = r"C:\Users\lihehui\Desktop\Map\桃源之门\Maps\map\tiles\桃园副本"
+output_folder = r"C:\Users\lihehui\Desktop\Map\桃源之门\Maps\map\tiles\桃园副本\桃园副本.jpg"
 
 # 确保输出目录存在
 os.makedirs(output_folder, exist_ok=True)
