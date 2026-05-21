@@ -7,8 +7,8 @@ Image.MAX_IMAGE_PIXELS = None
 debug = sys.gettrace()
 if debug:
     # 指定输入图像和输出路径
-    input_image_path = r"C:\Users\lihehui\Desktop\Map\Maps\map\tiles\ta9\ta9.png"
-    output_image_path = r"C:\Users\lihehui\Desktop\Map\Maps\map\tiles\ta9\ta9.png"
+    input_image_path = r"C:\Users\lihehui\Desktop\Map\大爆地图\Maps\map\tiles\11929\11929.png"
+    output_image_path = r"C:\Users\lihehui\Desktop\Map\大爆地图\Maps\map\tiles\11929\11929.png"
 else:
     input_image_path = sys.argv[1]
     output_image_path = sys.argv[2]
@@ -41,4 +41,4 @@ def replace_color(image_path, output_path, target_color_range=((200, 210), (200,
     # 保存修改后的图像
     modified_image.save(output_path)
 
-replace_color(input_image_path, output_image_path, target_color_range=((180, 210), (180, 210), (180, 210)), replacement_color=(0, 0, 0))
+replace_color(input_image_path, output_image_path, target_color_range=((204, 206), (204, 206), (204, 206)), replacement_color=(0, 0, 0))
