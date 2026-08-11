@@ -5,15 +5,16 @@ import glob
 import os
 import concurrent.futures
 
-debug = sys.gettrace()
-if debug:
-    print("Debug模式\n")
-    pathRoot = r'C:\\Users\\lihehui\\Desktop\\Map\\战纪系列传战9层妖塔\\Tiles169\\'
-    outRoot = r'C:\\Users\\lihehui\\Desktop\\Map\\战纪系列传战9层妖塔\\Tiles169\\'
-else:
+if len(sys.argv) >= 3:
+    # 带 2 个参数 = Release:python Bmp2Png.py <readPath> <outPath>
     pathRoot = sys.argv[1]
     outRoot = sys.argv[2]
     print("Release模式\nreadPath: ", pathRoot, " outPath: ", outRoot)
+else:
+    # 无参数 = 调试模式,用固定路径
+    print("Debug模式\n")
+    pathRoot = r'C:\Users\lihehui\Desktop\9张地图\227号地图-帝王陵墓\227号地图帝王陵墓\原图\\'
+    outRoot = r'C:\Users\lihehui\Desktop\9张地图\227号地图-帝王陵墓\227号地图帝王陵墓\原图\\'
 
 def getFileName(path):
     file_name = os.path.basename(path)

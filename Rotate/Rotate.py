@@ -18,7 +18,7 @@ else:
     outRoot = pathRoot
     print("Release模式\nreadPath: ", pathRoot, " angle: ", angle)
 
-filePaths = os.listdir(pathRoot)
+filePaths = [f for f in os.listdir(pathRoot) if f.lower().endswith('.png')]
 
 def transpose(img_path, out_path):
     # 打开PNG图片

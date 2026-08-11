@@ -5,13 +5,15 @@ import numpy as np
 Image.MAX_IMAGE_PIXELS = None
 
 debug = sys.gettrace()
-if debug:
-    # 指定输入图像和输出路径
-    input_image_path = r"C:\Users\lihehui\Desktop\Map\大爆地图\Maps\map\tiles\11929\11929.png"
-    output_image_path = r"C:\Users\lihehui\Desktop\Map\大爆地图\Maps\map\tiles\11929\11929.png"
-else:
+if len(sys.argv) >= 3:
+    print("Release模式\n")
     input_image_path = sys.argv[1]
     output_image_path = sys.argv[2]
+    print("Release模式\ninput_image_path: ", input_image_path, " output_image_path: ", output_image_path)
+else:
+    # 指定输入图像和输出路径
+    input_image_path = r"C:\Users\lihehui\Desktop\9张地图\dt070323W\dt070323W\Maps\map\tiles\New_rxcq2012\New_rxcq2012.png"
+    output_image_path = r"C:\Users\lihehui\Desktop\9张地图\dt070323W\dt070323W\Maps\map\tiles\New_rxcq2012\New_rxcq2012.png"
 
 def replace_color(image_path, output_path, target_color_range=((200, 210), (200, 210), (200, 210)), replacement_color=(0, 0, 0)):
     # 打开图像
