@@ -9,8 +9,9 @@ from PIL import Image
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel,
-                               QLineEdit, QMainWindow, QMessageBox, QProgressDialog,
-                               QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget)
+                               QLineEdit, QMainWindow, QMessageBox, QProgressBar,
+                               QProgressDialog, QPushButton, QScrollArea, QSlider,
+                               QVBoxLayout, QWidget)
 
 ATLAS = 2048       # 图集边长
 PADDING = 4        # TexturePacker 帧间距 (padding 语义: 每帧占 w+4)
@@ -147,6 +148,41 @@ class LoadWorker(QThread):
             self.failed.emit(str(e))
 
 
+class ExportWorker(QThread):
+    """后台缩小导出线程: 按缩放比例缩小全部帧 (取偶, LANCZOS 保品质, 保留透明)"""
+    progress = Signal(int, int)  # 当前帧, 总帧数
+    done = Signal(str)           # 输出目录
+    failed = Signal(int, str)    # 帧号, 错误信息
+
+    def __init__(self, folder, out_dir, scale, parent=None):
+        super().__init__(parent)
+        self.folder = folder
+        self.out_dir = out_dir
+        self.scale = scale
+
+    def run(self):
+        try:
+            files = sorted((f for f in os.listdir(self.folder)
+                            if os.path.splitext(f)[1].lower() in SUPPORTED), key=natural_key)
+            total = len(files)
+            for i, f in enumerate(files):
+                src = os.path.join(self.folder, f)
+                with Image.open(src) as im:
+                    if im.mode != 'RGBA':
+                        im = im.convert('RGBA')
+                    w, h = even_size(im.width, im.height, self.scale)
+                    im = im.resize((w, h), Image.Resampling.LANCZOS)
+                    if os.path.splitext(f)[1].lower() in ('.jpg', '.jpeg', '.bmp'):
+                        im.convert('RGB').save(os.path.join(self.out_dir, f))
+                    else:
+                        im.save(os.path.join(self.out_dir, f))  # PNG/WebP 保留透明
+                if i % 5 == 0:
+                    self.progress.emit(i, total)
+            self.done.emit(self.out_dir)
+        except Exception as e:
+            self.failed.emit(0, str(e))
+
+
 class SectionCard(QFrame):
     """卡片式分组容器: 左侧彩色色条标题 + 内容区 (参考 Gif2PngUI.py)"""
     def __init__(self, title, accent="#4488ff", parent=None):
@@ -263,6 +299,17 @@ class MainWindow(QMainWindow):
         self.label_atlas = QLabel('载入文件夹后计算')
         self.label_atlas.setWordWrap(True)
         atlas_card.addWidget(self.label_atlas)
+        row = QHBoxLayout()
+        self.btn_export = QPushButton('缩小导出')
+        self.btn_export.setObjectName('primaryButton')
+        self.btn_export.setEnabled(False)
+        self.btn_export.clicked.connect(self._export_shrink)
+        row.addWidget(self.btn_export)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFormat('%v/%m  帧')
+        self.progress_bar.hide()
+        row.addWidget(self.progress_bar, 1)
+        atlas_card.addLayout(row)
         root.addWidget(atlas_card)
 
         self.setCentralWidget(central)
@@ -272,6 +319,46 @@ class MainWindow(QMainWindow):
         self._refresh_atlas()
         if self.pixmaps:
             self._show_frame(self.idx)
+
+    # ---------------- 缩小导出 ----------------
+    def _export_shrink(self):
+        s = self.slider_scale.value()
+        if not self.pixmaps or s >= 100:
+            return
+        out_dir = os.path.join(os.path.dirname(self.folder),
+                               os.path.basename(self.folder) + f'_{s}%')
+        if not os.path.isdir(out_dir):
+            os.makedirs(out_dir, exist_ok=True)
+        else:
+            old = [f for f in os.listdir(out_dir)
+                   if os.path.splitext(f)[1].lower() in SUPPORTED]
+            if old:
+                ret = QMessageBox.question(
+                    self, '确认', f'输出目录已有 {len(old)} 个文件, 清空后重新导出?',
+                    QMessageBox.Yes | QMessageBox.No)
+                if ret != QMessageBox.Yes:
+                    return
+                for f in old:
+                    os.remove(os.path.join(out_dir, f))
+        self.btn_export.setEnabled(False)
+        self.progress_bar.setRange(0, len(self.sizes))
+        self.progress_bar.setValue(0)
+        self.progress_bar.show()
+        self.worker_export = ExportWorker(self.folder, out_dir, s / 100.0)
+        self.worker_export.progress.connect(
+            lambda cur, total: (self.progress_bar.setRange(0, total),
+                                self.progress_bar.setValue(cur)))
+        self.worker_export.done.connect(self._export_done)
+        self.worker_export.failed.connect(self._export_failed)
+        self.worker_export.start()
+
+    def _export_failed(self, idx, msg):
+        self.btn_export.setEnabled(True)
+        QMessageBox.critical(self, '导出失败', f'帧 {idx}: {msg}')
+
+    def _export_done(self, out_dir):
+        self.btn_export.setEnabled(True)
+        QMessageBox.information(self, '完成', f'缩小导出完成!\n目录: {out_dir}')
 
     # ---------------- 样式表 (暗色主题, 复刻 Gif2PngUI.py) ----------------
     def _build_stylesheet(self):
@@ -399,8 +486,9 @@ class MainWindow(QMainWindow):
         if s < 100:  # 按滑块缩放显示 (100% = 原图 1:1)
             pm = pm.scaled(max(1, pm.width() * s // 100), max(1, pm.height() * s // 100),
                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        # label 尺寸固定为原图尺寸, 缩放图居中 -> 滚动区域不跳动 (防滑块拖动抖动)
+        self.label_preview.setFixedSize(self.pixmaps[i].size())
         self.label_preview.setPixmap(pm)
-        self.label_preview.resize(pm.size())
         self.label_frame_count.setText(f'帧: {i + 1}/{len(self.pixmaps)}')
 
     # ---------------- 图集计算 (Trim 模式) ----------------
@@ -408,6 +496,9 @@ class MainWindow(QMainWindow):
         """完整刷新图集显示: Trim 前后图集数量 + 当前滑块缩放下的尺寸与数量"""
         s = self.slider_scale.value()
         self.label_scale_pct.setText(f'{s}%')
+        self.btn_export.setText(f'缩小导出 {s}%' if s < 100 else '缩小导出')
+        exporting = getattr(self, 'worker_export', None) and self.worker_export.isRunning()
+        self.btn_export.setEnabled(bool(self.pixmaps) and s < 100 and not exporting)
         if not self.pixmaps:
             self.label_scaled_size.setText('缩放后: --')
             return
@@ -435,6 +526,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
             self.worker.wait(1000)
+        if getattr(self, 'worker_export', None) and self.worker_export.isRunning():
+            self.worker_export.wait(1000)
         event.accept()
 
 
