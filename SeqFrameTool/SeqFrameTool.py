@@ -7,7 +7,7 @@ import sys
 
 from PIL import Image
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QProgressDialog,
                                QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget)
@@ -19,12 +19,11 @@ PLAY_INTERVAL = 80 # 播放帧间隔 ms (12.5fps)
 SUPPORTED = ('.png', '.jpg', '.jpeg', '.bmp', '.webp')
 
 
-def pil_to_pixmap(im):
-    """PIL Image -> QPixmap"""
-    im = im.convert('RGB')
-    data = im.tobytes('raw', 'RGB')
-    qimg = QImage(data, im.width, im.height, im.width * 3, QImage.Format_RGB888).copy()
-    return QPixmap.fromImage(qimg)
+def pil_to_qimage(im):
+    """PIL Image -> QImage (保留 alpha 通道; QImage 可在线程创建, QPixmap 必须主线程)"""
+    im = im.convert('RGBA')
+    data = im.tobytes('raw', 'RGBA')
+    return QImage(data, im.width, im.height, im.width * 4, QImage.Format_RGBA8888).copy()
 
 
 def natural_key(name):
@@ -46,6 +45,18 @@ def trim_size(im):
 def even_size(w, h, scale):
     """按比例缩放并取偶 (最小 2px), 返回 (w', h')"""
     return (max(2, round(w * scale / 2) * 2), max(2, round(h * scale / 2) * 2))
+
+
+def make_checker():
+    """棋盘格背景 (显示透明区域用)"""
+    pm = QPixmap(16, 16)
+    p = QPainter(pm)
+    p.fillRect(0, 0, 8, 8, QColor('#3a3a52'))
+    p.fillRect(8, 8, 8, 8, QColor('#3a3a52'))
+    p.fillRect(8, 0, 8, 8, QColor('#2a2a3a'))
+    p.fillRect(0, 8, 8, 8, QColor('#2a2a3a'))
+    p.end()
+    return pm
 
 
 # ---------------- MaxRects 装箱 (Best Short Side Fit, 模拟 TexturePacker 默认算法) ----------------
@@ -106,9 +117,10 @@ def atlas_count(rects, scale=1.0):
 
 
 class LoadWorker(QThread):
-    """后台加载线程: 解码全部帧为原图 + 记录尺寸/Trim 尺寸/文件名"""
+    """后台加载线程: 解码全部帧为 QImage + 记录尺寸/Trim 尺寸/文件名
+    (QImage 线程安全可在线程创建, 主线程再转 QPixmap)"""
     progress = Signal(int, int)  # 当前帧, 总帧数
-    loaded = Signal(list, list, list, list)  # sizes, pixmaps(QPixmap), trims, names
+    loaded = Signal(list, list, list, list)  # sizes, qimages(QImage), trims, names
     failed = Signal(str)
 
     def __init__(self, folder, parent=None):
@@ -120,17 +132,17 @@ class LoadWorker(QThread):
             files = sorted((f for f in os.listdir(self.folder)
                             if os.path.splitext(f)[1].lower() in SUPPORTED), key=natural_key)
             total = len(files)
-            sizes, pixmaps, trims, names = [], [], [], []
+            sizes, qimages, trims, names = [], [], [], []
             for i, f in enumerate(files):
                 path = os.path.join(self.folder, f)
                 with Image.open(path) as im:
                     sizes.append(im.size)
                     trims.append(trim_size(im))
-                    pixmaps.append(pil_to_pixmap(im))
+                    qimages.append(pil_to_qimage(im))
                 names.append(f)
                 if i % 5 == 0:
                     self.progress.emit(i, total)
-            self.loaded.emit(sizes, pixmaps, trims, names)
+            self.loaded.emit(sizes, qimages, trims, names)
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -216,12 +228,16 @@ class MainWindow(QMainWindow):
         play_row.addWidget(self.label_frame_count)
         play_row.addStretch(1)
         play_card.addLayout(play_row)
-        # 原图大小播放: 滚动区域 1:1 显示
+        # 原图大小播放: 滚动区域 1:1 显示, 透明区域显示棋盘格
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(False)
         self.label_preview = QLabel('载入文件夹后在此预览')
         self.label_preview.setObjectName('previewLabel')
         self.label_preview.setAlignment(Qt.AlignCenter)
+        self.label_preview.setAutoFillBackground(True)
+        pal = self.label_preview.palette()
+        pal.setBrush(QPalette.Window, QBrush(make_checker()))
+        self.label_preview.setPalette(pal)
         self.scroll.setWidget(self.label_preview)
         play_card.addWidget(self.scroll, 1)
         root.addWidget(play_card, 1)
@@ -235,7 +251,7 @@ class MainWindow(QMainWindow):
         self.slider_scale.setValue(100)
         self.slider_scale.setTickPosition(QSlider.TicksBelow)
         self.slider_scale.setTickInterval(10)
-        self.slider_scale.valueChanged.connect(lambda: self._refresh_atlas())
+        self.slider_scale.valueChanged.connect(self._on_scale_changed)
         row.addWidget(self.slider_scale, 1)
         self.label_scale_pct = QLabel('100%')
         self.label_scale_pct.setMinimumWidth(48)
@@ -251,6 +267,12 @@ class MainWindow(QMainWindow):
 
         self.setCentralWidget(central)
 
+    def _on_scale_changed(self):
+        """滑块变化: 刷新图集计算 + 预览按新缩放显示"""
+        self._refresh_atlas()
+        if self.pixmaps:
+            self._show_frame(self.idx)
+
     # ---------------- 样式表 (暗色主题, 复刻 Gif2PngUI.py) ----------------
     def _build_stylesheet(self):
         return """
@@ -262,8 +284,8 @@ class MainWindow(QMainWindow):
             background: #262638; border: 1px solid #323248; border-radius: 8px;
         }
         #previewLabel {
-            background: #161626; border: 1px solid #323248; border-radius: 6px;
-            color: #606070;
+            border: 1px solid #323248; border-radius: 6px;
+            color: #606070; background: transparent;
         }
         QPushButton {
             background: #3a3a52; border: 1px solid #4a4a68; border-radius: 5px;
@@ -338,10 +360,11 @@ class MainWindow(QMainWindow):
         self.btn_play.setEnabled(True)
         QMessageBox.critical(self, '加载失败', msg)
 
-    def _on_loaded(self, sizes, pixmaps, trims, names):
+    def _on_loaded(self, sizes, qimages, trims, names):
         self.progress.setValue(len(sizes))
         self.progress.close()
-        self.sizes, self.pixmaps, self.trims, self.names = sizes, pixmaps, trims, names
+        self.sizes, self.pixmaps, self.trims, self.names = \
+            sizes, [QPixmap.fromImage(q) for q in qimages], trims, names
         # 信息行
         uniq = sorted(set(sizes))
         size_txt = f'{uniq[0][0]}x{uniq[0][1]}' if len(uniq) == 1 else \
@@ -372,7 +395,11 @@ class MainWindow(QMainWindow):
     def _show_frame(self, i):
         self.idx = i
         pm = self.pixmaps[i]
-        self.label_preview.setPixmap(pm)  # 原图大小 1:1
+        s = self.slider_scale.value()
+        if s < 100:  # 按滑块缩放显示 (100% = 原图 1:1)
+            pm = pm.scaled(max(1, pm.width() * s // 100), max(1, pm.height() * s // 100),
+                           Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.label_preview.setPixmap(pm)
         self.label_preview.resize(pm.size())
         self.label_frame_count.setText(f'帧: {i + 1}/{len(self.pixmaps)}')
 
