@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QProgressBar,
-                               QProgressDialog, QPushButton, QScrollArea, QSlider,
+                               QProgressDialog, QPushButton, QScrollArea, QSpinBox,
                                QVBoxLayout, QWidget)
 
 ATLAS = 2048       # 图集边长
@@ -282,32 +282,33 @@ class MainWindow(QMainWindow):
         atlas_card = SectionCard('图集计算 (Trim 模式)', '#00cc66')
         row = QHBoxLayout()
         row.addWidget(QLabel('缩放:'))
-        self.slider_scale = QSlider(Qt.Horizontal)
-        self.slider_scale.setRange(10, 100)
-        self.slider_scale.setValue(100)
-        self.slider_scale.setTickPosition(QSlider.TicksBelow)
-        self.slider_scale.setTickInterval(10)
-        self.slider_scale.valueChanged.connect(self._on_scale_changed)
-        row.addWidget(self.slider_scale, 1)
-        self.label_scale_pct = QLabel('100%')
-        self.label_scale_pct.setMinimumWidth(48)
-        row.addWidget(self.label_scale_pct)
+        self.spin_scale = QSpinBox()
+        self.spin_scale.setRange(10, 100)
+        self.spin_scale.setValue(100)
+        self.spin_scale.setSuffix(' %')
+        self.spin_scale.valueChanged.connect(self._on_scale_changed)
+        row.addWidget(self.spin_scale)
+        row.addStretch(1)
         self.label_scaled_size = QLabel('缩放后: --')
         self.label_scaled_size.setObjectName('secondaryLabel')
         row.addWidget(self.label_scaled_size)
         atlas_card.addLayout(row)
         self.label_atlas = QLabel('载入文件夹后计算')
         self.label_atlas.setWordWrap(True)
+        self.label_atlas.setFixedHeight(40)  # 固定 2 行高度, 文本变化不撑高 (防布局抖动)
         atlas_card.addWidget(self.label_atlas)
+        self.label_scale_result = QLabel('')
+        self.label_scale_result.setObjectName('secondaryLabel')
+        self.label_scale_result.setFixedHeight(20)  # 固定 1 行高度 (防布局抖动)
+        atlas_card.addWidget(self.label_scale_result)
         row = QHBoxLayout()
         self.btn_export = QPushButton('缩小导出')
         self.btn_export.setObjectName('primaryButton')
         self.btn_export.setEnabled(False)
         self.btn_export.clicked.connect(self._export_shrink)
         row.addWidget(self.btn_export)
-        self.progress_bar = QProgressBar()
+        self.progress_bar = QProgressBar()  # 常驻固定高度, 导出时推进 (防布局抖动)
         self.progress_bar.setFormat('%v/%m  帧')
-        self.progress_bar.hide()
         row.addWidget(self.progress_bar, 1)
         atlas_card.addLayout(row)
         root.addWidget(atlas_card)
@@ -322,7 +323,7 @@ class MainWindow(QMainWindow):
 
     # ---------------- 缩小导出 ----------------
     def _export_shrink(self):
-        s = self.slider_scale.value()
+        s = self.spin_scale.value()
         if not self.pixmaps or s >= 100:
             return
         out_dir = os.path.join(os.path.dirname(self.folder),
@@ -343,7 +344,6 @@ class MainWindow(QMainWindow):
         self.btn_export.setEnabled(False)
         self.progress_bar.setRange(0, len(self.sizes))
         self.progress_bar.setValue(0)
-        self.progress_bar.show()
         self.worker_export = ExportWorker(self.folder, out_dir, s / 100.0)
         self.worker_export.progress.connect(
             lambda cur, total: (self.progress_bar.setRange(0, total),
@@ -397,17 +397,21 @@ class MainWindow(QMainWindow):
         QScrollArea {
             background: #161626; border: 1px solid #323248; border-radius: 6px;
         }
-        QSlider::groove:horizontal {
-            background: #2a2a3a; border: 1px solid #323248; height: 6px;
-            border-radius: 3px;
+        QSpinBox {
+            background: #2e2e44; border: 1px solid #3e3e58; border-radius: 4px;
+            padding: 4px 8px; color: #e0e0e0; min-height: 22px;
         }
-        QSlider::handle:horizontal {
-            background: #ff6600; width: 16px; margin: -7px 0;
-            border-radius: 4px; border: 1px solid #ff8833;
+        QSpinBox:hover { border-color: #4e4e6e; }
+        QSpinBox::up-button, QSpinBox::down-button {
+            background: #3a3a52; border: none; width: 16px;
         }
-        QSlider::handle:horizontal:hover { background: #ff8833; }
-        QSlider::sub-page:horizontal {
-            background: #ff6600; border-radius: 3px;
+        QSpinBox::up-arrow {
+            border-left: 4px solid transparent; border-right: 4px solid transparent;
+            border-bottom: 5px solid #9090a8;
+        }
+        QSpinBox::down-arrow {
+            border-left: 4px solid transparent; border-right: 4px solid transparent;
+            border-top: 5px solid #9090a8;
         }
         QLabel { color: #e0e0e0; }
         #secondaryLabel { color: #9090a8; font-size: 11px; }
@@ -482,7 +486,7 @@ class MainWindow(QMainWindow):
     def _show_frame(self, i):
         self.idx = i
         pm = self.pixmaps[i]
-        s = self.slider_scale.value()
+        s = self.spin_scale.value()
         if s < 100:  # 按滑块缩放显示 (100% = 原图 1:1)
             pm = pm.scaled(max(1, pm.width() * s // 100), max(1, pm.height() * s // 100),
                            Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -494,8 +498,7 @@ class MainWindow(QMainWindow):
     # ---------------- 图集计算 (Trim 模式) ----------------
     def _refresh_atlas(self):
         """完整刷新图集显示: Trim 前后图集数量 + 当前滑块缩放下的尺寸与数量"""
-        s = self.slider_scale.value()
-        self.label_scale_pct.setText(f'{s}%')
+        s = self.spin_scale.value()
         self.btn_export.setText(f'缩小导出 {s}%' if s < 100 else '缩小导出')
         exporting = getattr(self, 'worker_export', None) and self.worker_export.isRunning()
         self.btn_export.setEnabled(bool(self.pixmaps) and s < 100 and not exporting)
@@ -509,19 +512,23 @@ class MainWindow(QMainWindow):
         else:
             w, h = even_size(self.trims[0][0], self.trims[0][1], s / 100.0)
             self.label_scaled_size.setText(f'缩放后: {w}x{h}（偶数）')
-        # 图集数量: Trim 前 / Trim 后 / 当前缩放
-        lines = []
+        # 图集数量: Trim 前 / Trim 后 (固定 2 行); 缩放结果单独固定 1 行
         n_orig = atlas_count(self.sizes)
-        lines.append(f'Trim 前: 需要 {n_orig} 张 {ATLAS}x{ATLAS} 图集（帧间距 {PADDING}）'
-                     if n_orig else f'⚠ Trim 前单帧超过 {ATLAS}x{ATLAS}（含间距）, 无法放入图集')
         n_trim = atlas_count(self.trims)
-        lines.append(f'Trim 后: 需要 {n_trim} 张 {ATLAS}x{ATLAS} 图集（帧间距 {PADDING}）'
-                     if n_trim else f'⚠ Trim 后仍有单帧超过 {ATLAS}x{ATLAS}, 需要缩放')
+        self.label_atlas.setText(
+            f'Trim 前: 需要 {n_orig} 张 {ATLAS}x{ATLAS} 图集（帧间距 {PADDING}）\n'
+            f'Trim 后: 需要 {n_trim} 张 {ATLAS}x{ATLAS} 图集（帧间距 {PADDING}）'
+            if n_orig and n_trim else
+            (f'⚠ Trim 前单帧超过 {ATLAS}x{ATLAS}（含间距）, 无法放入图集\n'
+             f'Trim 后: 需要 {n_trim} 张 {ATLAS}x{ATLAS} 图集'
+             if n_trim else f'⚠ Trim 前后单帧均超过 {ATLAS}x{ATLAS}, 需要缩小'))
         if s < 100:
             n_s = atlas_count(self.trims, scale=s / 100.0)
-            lines.append(f'缩放至 {s}%: 需要 {n_s} 张 {ATLAS}x{ATLAS} 图集'
-                         if n_s else f'⚠ 缩放至 {s}% 仍有单帧超过 {ATLAS}x{ATLAS}')
-        self.label_atlas.setText('\n'.join(lines))
+            self.label_scale_result.setText(
+                f'缩放至 {s}%: 需要 {n_s} 张 {ATLAS}x{ATLAS} 图集'
+                if n_s else f'⚠ 缩放至 {s}% 仍有单帧超过 {ATLAS}x{ATLAS}')
+        else:
+            self.label_scale_result.setText('缩放至 100%: 原尺寸')
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
