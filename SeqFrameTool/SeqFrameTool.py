@@ -176,7 +176,7 @@ class ExportWorker(QThread):
                         im.convert('RGB').save(os.path.join(self.out_dir, f))
                     else:
                         im.save(os.path.join(self.out_dir, f))  # PNG/WebP 保留透明
-                if i % 5 == 0:
+                if i % 5 == 0 or i == total - 1:  # 最后一帧必发, 保证进度条走到头
                     self.progress.emit(i, total)
             self.done.emit(self.out_dir)
         except Exception as e:
@@ -358,6 +358,7 @@ class MainWindow(QMainWindow):
 
     def _export_done(self, out_dir):
         self.btn_export.setEnabled(True)
+        self.progress_bar.setValue(self.progress_bar.maximum())  # 进度条走满
         QMessageBox.information(self, '完成', f'缩小导出完成!\n目录: {out_dir}')
 
     # ---------------- 样式表 (暗色主题, 复刻 Gif2PngUI.py) ----------------
