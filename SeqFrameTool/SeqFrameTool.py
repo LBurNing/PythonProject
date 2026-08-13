@@ -1,23 +1,19 @@
 # PySide6 序列帧优化工具
-# 功能: 播放序列帧(大图预览+胶片条) / 计算 TexturePacker 图集数量(2048x2048, 帧间距4) /
-#       超过10张上限时给出缩小(取偶保品质)或抽帧建议
+# 功能: 播放序列帧(原图大小) / 缩放滑块实时显示缩放后尺寸与图集数量 /
+#       TexturePacker Trim 模式计算 2048x2048 图集数量(帧间距4)
 import os
 import re
 import sys
 
 from PIL import Image
-from PySide6.QtCore import Qt, QSize, QThread, QTimer, Signal
-from PySide6.QtGui import QIcon, QImage, QPixmap
-from PySide6.QtWidgets import (QAbstractItemView, QApplication, QFileDialog, QFrame,
-                               QHBoxLayout, QLabel, QLineEdit, QListView, QListWidget,
-                               QListWidgetItem, QMainWindow, QMessageBox, QProgressDialog,
-                               QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QImage, QPixmap
+from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QLineEdit, QMainWindow, QMessageBox, QProgressDialog,
+                               QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget)
 
 ATLAS = 2048       # 图集边长
 PADDING = 4        # TexturePacker 帧间距 (padding 语义: 每帧占 w+4)
-MAX_ATLASES = 10   # 图集数量上限
-PREVIEW_W = 640    # 预览缓存图最大宽
-FILM_H = 80        # 胶片条缩略图高
 PLAY_INTERVAL = 80 # 播放帧间隔 ms (12.5fps)
 
 SUPPORTED = ('.png', '.jpg', '.jpeg', '.bmp', '.webp')
@@ -34,6 +30,17 @@ def pil_to_pixmap(im):
 def natural_key(name):
     """自然排序 key: frame_2.png < frame_10.png"""
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', name)]
+
+
+def trim_size(im):
+    """TexturePacker Trim 模式: 裁掉全透明边, 返回非透明区域 (w, h);
+    无 alpha 通道返回原尺寸; 全透明返回 (1, 1)"""
+    if im.mode not in ('RGBA', 'LA', 'P'):
+        return im.size
+    bbox = im.convert('RGBA').getchannel('A').getbbox()
+    if bbox is None:
+        return (1, 1)
+    return (bbox[2] - bbox[0], bbox[3] - bbox[1])
 
 
 def even_size(w, h, scale):
@@ -74,18 +81,18 @@ def _prune(free):
     free[:] = kept
 
 
-def atlas_count(rects, scale=1.0, keep_every=1):
-    """MaxRects 装箱所需图集数。rects: [(w, h), ...] 帧原始尺寸。
-    scale: 全局缩放比例; keep_every: 抽帧间隔(每 N 帧取 1)。
+def atlas_count(rects, scale=1.0):
+    """MaxRects 装箱所需图集数。rects: [(w, h), ...] 帧尺寸(Trim 后或原尺寸)。
+    scale: 全局缩放比例(缩放后取偶)。
     单帧(缩放后)放不进图集返回 None"""
-    items = sorted(rects[::keep_every], key=lambda r: (r[0] + PADDING) * (r[1] + PADDING), reverse=True)
+    items = sorted(rects, key=lambda r: (r[0] + PADDING) * (r[1] + PADDING), reverse=True)
     bins = 0
     free = [(0, 0, ATLAS, ATLAS)]
     for w, h in items:
         if scale < 1.0:
-            iw, ih = even_size(w, h, scale)  # 缩放后取偶 (用户要求)
+            iw, ih = even_size(w, h, scale)  # 缩放后取偶
         else:
-            iw, ih = w, h  # 原始帧用真实尺寸
+            iw, ih = w, h  # 原始尺寸
         iw += PADDING
         ih += PADDING
         if iw > ATLAS or ih > ATLAS:
@@ -98,43 +105,10 @@ def atlas_count(rects, scale=1.0, keep_every=1):
     return bins + 1
 
 
-def calc_shrink(rects, limit=MAX_ATLASES):
-    """求最大缩放百分比 (1% 精度, 取偶, 尽量少缩) 使图集数 <= limit, 返回 (percent, 图集数, 示例缩放后尺寸)"""
-    base = atlas_count(rects)
-    if base is not None and base <= limit:
-        return None
-    # 单帧超图集(未缩放为 None)或超上限: 二分求最大可行缩放 (fits 随 scale 单调)
-    lo, hi = 1, 99
-    best = None
-    while lo <= hi:
-        mid = (lo + hi) // 2
-        cnt = atlas_count(rects, scale=mid / 100.0)
-        if cnt is not None and cnt <= limit:
-            best = mid
-            lo = mid + 1
-        else:
-            hi = mid - 1
-    if best is None:
-        return None
-    cnt = atlas_count(rects, scale=best / 100.0)
-    w, h = even_size(rects[0][0], rects[0][1], best / 100.0)
-    return best, cnt, (w, h)
-
-
-def calc_skip(rects, limit=MAX_ATLASES):
-    """求最小抽帧间隔 N (每 N 帧取 1) 使图集数 <= limit, 返回 (N, 保留帧数, 抽掉帧数, 图集数)"""
-    n = len(rects)
-    for keep_every in range(2, 21):
-        cnt = atlas_count(rects, keep_every=keep_every)
-        if cnt is not None and cnt <= limit:
-            return keep_every, (n + keep_every - 1) // keep_every, n - (n + keep_every - 1) // keep_every, cnt
-    return None
-
-
 class LoadWorker(QThread):
-    """后台加载线程: 解码全部帧为预览缓存图 + 记录尺寸/文件名"""
+    """后台加载线程: 解码全部帧为原图 + 记录尺寸/Trim 尺寸/文件名"""
     progress = Signal(int, int)  # 当前帧, 总帧数
-    loaded = Signal(list, list, list)  # sizes, previews(QPixmap), names
+    loaded = Signal(list, list, list, list)  # sizes, pixmaps(QPixmap), trims, names
     failed = Signal(str)
 
     def __init__(self, folder, parent=None):
@@ -146,18 +120,17 @@ class LoadWorker(QThread):
             files = sorted((f for f in os.listdir(self.folder)
                             if os.path.splitext(f)[1].lower() in SUPPORTED), key=natural_key)
             total = len(files)
-            sizes, previews, names = [], [], []
+            sizes, pixmaps, trims, names = [], [], [], []
             for i, f in enumerate(files):
                 path = os.path.join(self.folder, f)
                 with Image.open(path) as im:
                     sizes.append(im.size)
-                    prev = im.copy()
-                    prev.thumbnail((PREVIEW_W, PREVIEW_W), Image.Resampling.LANCZOS)
-                    previews.append(pil_to_pixmap(prev))
+                    trims.append(trim_size(im))
+                    pixmaps.append(pil_to_pixmap(im))
                 names.append(f)
                 if i % 5 == 0:
                     self.progress.emit(i, total)
-            self.loaded.emit(sizes, previews, names)
+            self.loaded.emit(sizes, pixmaps, trims, names)
         except Exception as e:
             self.failed.emit(str(e))
 
@@ -192,11 +165,13 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('序列帧优化')
-        self.setMinimumSize(960, 640)
+        self.setMinimumSize(1280, 800)
+        self.resize(1920, 1080)  # 默认窗口尺寸 (游戏编辑器标准分辨率)
 
         self.folder = None
         self.sizes = []       # [(w, h), ...]
-        self.previews = []    # [QPixmap, ...] 预览缓存
+        self.pixmaps = []     # [QPixmap, ...] 原图
+        self.trims = []       # [(w, h), ...] Trim 后尺寸
         self.names = []       # [str, ...]
         self.idx = 0          # 当前帧号
         self.worker = None
@@ -241,28 +216,34 @@ class MainWindow(QMainWindow):
         play_row.addWidget(self.label_frame_count)
         play_row.addStretch(1)
         play_card.addLayout(play_row)
+        # 原图大小播放: 滚动区域 1:1 显示
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(False)
         self.label_preview = QLabel('载入文件夹后在此预览')
         self.label_preview.setObjectName('previewLabel')
-        self.label_preview.setMinimumSize(320, 280)
         self.label_preview.setAlignment(Qt.AlignCenter)
-        play_card.addWidget(self.label_preview, 1)
-        # 横向胶片条
-        self.film = QListWidget()
-        self.film.setViewMode(QListView.IconMode)
-        self.film.setFlow(QListView.LeftToRight)
-        self.film.setMovement(QListView.Static)
-        self.film.setIconSize(QSize(FILM_H, FILM_H))
-        self.film.setGridSize(QSize(FILM_H + 10, FILM_H + 10))
-        self.film.setSpacing(2)
-        self.film.setFixedHeight(FILM_H + 36)
-        self.film.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.film.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.film.currentItemChanged.connect(self._on_film_select)
-        play_card.addWidget(self.film)
+        self.scroll.setWidget(self.label_preview)
+        play_card.addWidget(self.scroll, 1)
         root.addWidget(play_card, 1)
 
-        # --- 图集卡片 ---
-        atlas_card = SectionCard('图集计算', '#00cc66')
+        # --- 图集卡片 (Trim 模式 + 缩放滑块) ---
+        atlas_card = SectionCard('图集计算 (Trim 模式)', '#00cc66')
+        row = QHBoxLayout()
+        row.addWidget(QLabel('缩放:'))
+        self.slider_scale = QSlider(Qt.Horizontal)
+        self.slider_scale.setRange(10, 100)
+        self.slider_scale.setValue(100)
+        self.slider_scale.setTickPosition(QSlider.TicksBelow)
+        self.slider_scale.setTickInterval(10)
+        self.slider_scale.valueChanged.connect(lambda: self._refresh_atlas())
+        row.addWidget(self.slider_scale, 1)
+        self.label_scale_pct = QLabel('100%')
+        self.label_scale_pct.setMinimumWidth(48)
+        row.addWidget(self.label_scale_pct)
+        self.label_scaled_size = QLabel('缩放后: --')
+        self.label_scaled_size.setObjectName('secondaryLabel')
+        row.addWidget(self.label_scaled_size)
+        atlas_card.addLayout(row)
         self.label_atlas = QLabel('载入文件夹后计算')
         self.label_atlas.setWordWrap(True)
         atlas_card.addWidget(self.label_atlas)
@@ -304,16 +285,23 @@ class MainWindow(QMainWindow):
             padding: 4px 8px; color: #e0e0e0; min-height: 22px;
         }
         QLineEdit:hover { border-color: #4e4e6e; }
-        QListWidget {
+        QScrollArea {
             background: #161626; border: 1px solid #323248; border-radius: 6px;
-            padding: 4px;
         }
-        QListWidget::item { border-radius: 4px; padding: 1px; }
-        QListWidget::item:hover { background: #2a2a3a; }
-        QListWidget::item:selected { background: #ff6600; border: 1px solid #ff8833; }
+        QSlider::groove:horizontal {
+            background: #2a2a3a; border: 1px solid #323248; height: 6px;
+            border-radius: 3px;
+        }
+        QSlider::handle:horizontal {
+            background: #ff6600; width: 16px; margin: -7px 0;
+            border-radius: 4px; border: 1px solid #ff8833;
+        }
+        QSlider::handle:horizontal:hover { background: #ff8833; }
+        QSlider::sub-page:horizontal {
+            background: #ff6600; border-radius: 3px;
+        }
         QLabel { color: #e0e0e0; }
         #secondaryLabel { color: #9090a8; font-size: 11px; }
-        #atlasWarn { color: #ff8844; font-size: 12px; }
         QMessageBox { background: #262638; color: #e0e0e0; }
         """
 
@@ -350,28 +338,23 @@ class MainWindow(QMainWindow):
         self.btn_play.setEnabled(True)
         QMessageBox.critical(self, '加载失败', msg)
 
-    def _on_loaded(self, sizes, previews, names):
+    def _on_loaded(self, sizes, pixmaps, trims, names):
         self.progress.setValue(len(sizes))
         self.progress.close()
-        self.sizes, self.previews, self.names = sizes, previews, names
+        self.sizes, self.pixmaps, self.trims, self.names = sizes, pixmaps, trims, names
         # 信息行
         uniq = sorted(set(sizes))
         size_txt = f'{uniq[0][0]}x{uniq[0][1]}' if len(uniq) == 1 else \
             f'{uniq[0][0]}x{uniq[0][1]} ~ {uniq[-1][0]}x{uniq[-1][1]}'
-        self.label_info.setText(f'帧数: {len(sizes)}    尺寸: {size_txt}    播放间隔: {PLAY_INTERVAL}ms')
-        # 胶片条
-        self.film.clear()
-        for i, pm in enumerate(previews):
-            item = QListWidgetItem(QIcon(pm), '')
-            item.setData(Qt.UserRole, i)
-            item.setToolTip(f'{names[i]}  ({sizes[i][0]}x{sizes[i][1]})')
-            self.film.addItem(item)
+        trim_max = (max(t[0] for t in trims), max(t[1] for t in trims))
+        self.label_info.setText(
+            f'帧数: {len(sizes)}    尺寸: {size_txt}    Trim 后最大: {trim_max[0]}x{trim_max[1]}'
+            f'    播放间隔: {PLAY_INTERVAL}ms')
         # 播放到第一帧
         self.idx = 0
         self._show_frame(0)
-        self._update_atlas()
+        self._refresh_atlas()
         self.btn_play.setEnabled(True)
-        self.label_frame_count.setText(f'帧: 1/{len(sizes)}')
 
     # ---------------- 播放 ----------------
     def _toggle_play(self):
@@ -383,51 +366,44 @@ class MainWindow(QMainWindow):
             self.btn_play.setText('暂停')
 
     def _tick(self):
-        self.idx = (self.idx + 1) % len(self.previews)
+        self.idx = (self.idx + 1) % len(self.pixmaps)
         self._show_frame(self.idx)
-
-    def _on_film_select(self, current, previous):
-        if current is not None:  # 点击胶片条: 暂停并跳帧
-            self.timer.stop()
-            self.btn_play.setText('播放')
-            self._show_frame(current.data(Qt.UserRole))
 
     def _show_frame(self, i):
         self.idx = i
-        pm = self.previews[i]
-        self.label_preview.setPixmap(pm.scaled(
-            self.label_preview.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.label_frame_count.setText(f'帧: {i + 1}/{len(self.previews)}')
-        self.film.setCurrentRow(i)
+        pm = self.pixmaps[i]
+        self.label_preview.setPixmap(pm)  # 原图大小 1:1
+        self.label_preview.resize(pm.size())
+        self.label_frame_count.setText(f'帧: {i + 1}/{len(self.pixmaps)}')
 
-    # ---------------- 图集计算 ----------------
-    def _update_atlas(self):
-        rects = self.sizes
-        n = atlas_count(rects)
-        if n is not None and n <= MAX_ATLASES:
-            self.label_atlas.setText(
-                f'需要 {n} 张 {ATLAS}x{ATLAS} 图集（帧间距 {PADDING}, MaxRects 装箱模拟 TexturePacker）')
+    # ---------------- 图集计算 (Trim 模式) ----------------
+    def _refresh_atlas(self):
+        """完整刷新图集显示: Trim 前后图集数量 + 当前滑块缩放下的尺寸与数量"""
+        s = self.slider_scale.value()
+        self.label_scale_pct.setText(f'{s}%')
+        if not self.pixmaps:
+            self.label_scaled_size.setText('缩放后: --')
             return
-        # 超上限或单帧超图集: 给方案
-        lines = [f'需要 {n} 张 {ATLAS}x{ATLAS}, 超过上限 {MAX_ATLASES} 张!' if n else
-                 f'⚠ 存在单帧(含间距{PADDING})超过 {ATLAS}x{ATLAS}, 无法放入图集']
-        shrink = calc_shrink(rects)
-        if shrink:
-            pct, cnt, (w, h) = shrink
-            tip = '' if pct >= 50 else '  ⚠ 缩放 <50% 品质损失明显, 建议改用抽帧'
-            lines.append(f'方案1 缩小: 缩放至 {pct}% → {cnt} 张（示例帧 → {w}x{h}, 尺寸取偶, 导出时用 LANCZOS 保品质）{tip}')
-        skip = calc_skip(rects)
-        if skip:
-            k, kept, dropped, cnt = skip
-            lines.append(f'方案2 抽帧: 每 {k} 帧取 1 帧 → 保留 {kept} 帧（抽掉 {dropped} 帧）, {cnt} 张')
-        if not shrink and not skip:
-            lines.append('⚠ 无法通过缩放或抽帧降到 10 张以内')
+        # 缩放后尺寸
+        if s >= 100:
+            w, h = self.trims[0]  # 100% 时显示 Trim 原尺寸, 不取偶
+            self.label_scaled_size.setText(f'缩放后: {w}x{h}')
+        else:
+            w, h = even_size(self.trims[0][0], self.trims[0][1], s / 100.0)
+            self.label_scaled_size.setText(f'缩放后: {w}x{h}（偶数）')
+        # 图集数量: Trim 前 / Trim 后 / 当前缩放
+        lines = []
+        n_orig = atlas_count(self.sizes)
+        lines.append(f'Trim 前: 需要 {n_orig} 张 {ATLAS}x{ATLAS} 图集（帧间距 {PADDING}）'
+                     if n_orig else f'⚠ Trim 前单帧超过 {ATLAS}x{ATLAS}（含间距）, 无法放入图集')
+        n_trim = atlas_count(self.trims)
+        lines.append(f'Trim 后: 需要 {n_trim} 张 {ATLAS}x{ATLAS} 图集（帧间距 {PADDING}）'
+                     if n_trim else f'⚠ Trim 后仍有单帧超过 {ATLAS}x{ATLAS}, 需要缩放')
+        if s < 100:
+            n_s = atlas_count(self.trims, scale=s / 100.0)
+            lines.append(f'缩放至 {s}%: 需要 {n_s} 张 {ATLAS}x{ATLAS} 图集'
+                         if n_s else f'⚠ 缩放至 {s}% 仍有单帧超过 {ATLAS}x{ATLAS}')
         self.label_atlas.setText('\n'.join(lines))
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.previews:
-            self._show_frame(self.idx)
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
