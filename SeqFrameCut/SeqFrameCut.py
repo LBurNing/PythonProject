@@ -1,6 +1,6 @@
-# PySide6 序列帧拆切工具
-# 功能: 选择序列帧文件夹自动播放预览 / 拖拽裁剪框调整拆切区域 /
-#       「拆切」按该区域把每帧 crop 导出到新文件夹 (保留原文件名与 alpha)
+# PySide6 序列帧透明化工具
+# 功能: 选择序列帧文件夹自动播放预览 / 拖拽框选区域 /
+#       「透明化」把每帧框内像素变透明, 其余不变, 输出保持原图尺寸 (保留原文件名)
 import os
 import re
 import sys
@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, Q
                                QLineEdit, QMainWindow, QMessageBox, QProgressBar,
                                QProgressDialog, QPushButton, QVBoxLayout, QWidget)
 
-from content_trim import shrink_box
 from rect_edit import RectEdit
 
 PLAY_INTERVAL = 80   # 播放帧间隔 ms (12.5fps)
@@ -78,11 +77,11 @@ class LoadWorker(QThread):
             self.failed.emit(str(e))
 
 
-class CutWorker(QThread):
-    """后台拆切线程: 按归一化裁剪框逐帧 crop 保存, 并自动收缩到框内真实内容。
-    全透明帧跳过 (完成时上报跳过数)。保留原文件名与 alpha。"""
+class TransparentWorker(QThread):
+    """后台透明化线程: 每帧把框内区域覆盖为全透明, 其余像素不变 (输出保持原尺寸)。
+    jpg/bmp 输入无 alpha, 转存 PNG 保留透明。"""
     progress = Signal(int, int)
-    done = Signal(str, int)  # 输出目录, 跳过的帧数
+    done = Signal(str)
     failed = Signal(int, str)
 
     def __init__(self, folder, out_dir, nx, ny, nw, nh, parent=None):
@@ -97,31 +96,29 @@ class CutWorker(QThread):
             files = sorted((f for f in os.listdir(self.folder)
                             if os.path.splitext(f)[1].lower() in SUPPORTED), key=natural_key)
             total = len(files)
-            skipped = 0
             nx, ny, nw, nh = self.nbox
             for i, f in enumerate(files):
                 src = os.path.join(self.folder, f)
                 with Image.open(src) as im:
+                    if im.mode != 'RGBA':
+                        im = im.convert('RGBA')
                     w, h = im.width, im.height
                     box = (round(nx * w), round(ny * h),
                            round((nx + nw) * w), round((ny + nh) * h))
                     box = (max(0, box[0]), max(0, box[1]),
                            min(w, box[2]), min(h, box[3]))
-                    if box[2] <= box[0] or box[3] <= box[1]:
-                        skipped += 1
-                        continue
-                    shrink = shrink_box(im, box)  # 收缩到框内真实内容
-                    if shrink is None:             # 框内全透明, 跳过
-                        skipped += 1
-                        continue
-                    x, y, cw, ch = shrink
-                    im = im.crop((x, y, x + cw, y + ch))
+                    if box[2] > box[0] and box[3] > box[1]:
+                        # 框内直接覆盖全透明图块 (无需逐像素)
+                        overlay = Image.new('RGBA', (box[2] - box[0], box[3] - box[1]),
+                                            (0, 0, 0, 0))
+                        im.paste(overlay, (box[0], box[1]))
+                    out_name = f
                     if os.path.splitext(f)[1].lower() in ('.jpg', '.jpeg', '.bmp'):
-                        im = im.convert('RGB')
-                    im.save(os.path.join(self.out_dir, f))
+                        out_name = os.path.splitext(f)[0] + '.png'  # 透明只能存 PNG
+                    im.save(os.path.join(self.out_dir, out_name))
                 if i % 5 == 0 or i == total - 1:  # 最后一帧必发, 保证进度条走到头
                     self.progress.emit(i, total)
-            self.done.emit(self.out_dir, skipped)
+            self.done.emit(self.out_dir)
         except Exception as e:
             self.failed.emit(0, str(e))
 
@@ -253,7 +250,7 @@ class PreviewLabel(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('序列帧拆切')
+        self.setWindowTitle('序列帧透明化')
         self.setMinimumSize(1280, 800)
         self.resize(1920, 1080)
 
@@ -293,7 +290,7 @@ class MainWindow(QMainWindow):
         root.addWidget(file_card)
 
         # --- 预览卡片 ---
-        play_card = SectionCard('预览 (拖拽框上下左右调整拆切区域)', '#ff8800')
+        play_card = SectionCard('预览 (拖拽框上下左右框选透明区域)', '#ff8800')
         play_row = QHBoxLayout()
         self.btn_play = QPushButton('播放')
         self.btn_play.setObjectName('primaryButton')
@@ -312,8 +309,8 @@ class MainWindow(QMainWindow):
         play_card.addWidget(self.preview, 1)
         root.addWidget(play_card, 1)
 
-        # --- 拆切卡片 ---
-        cut_card = SectionCard('拆切', '#00cc66')
+        # --- 透明化卡片 ---
+        clear_card = SectionCard('透明化', '#00cc66')
         row = QHBoxLayout()
         row.addWidget(QLabel('输出:'))
         self.edit_out = QLineEdit()
@@ -321,26 +318,26 @@ class MainWindow(QMainWindow):
         btn_out = QPushButton('浏览...')
         btn_out.clicked.connect(self._browse_out)
         row.addWidget(btn_out)
-        cut_card.addLayout(row)
-        self.label_crop = QLabel('裁剪区: --')
+        clear_card.addLayout(row)
+        self.label_crop = QLabel('框选区: --')
         self.label_crop.setObjectName('secondaryLabel')
         self.label_crop.setFixedHeight(20)
-        cut_card.addWidget(self.label_crop)
-        self.label_hint = QLabel('提示: 拆切时自动收缩到框内真实内容, 多余透明边自动去除')
+        clear_card.addWidget(self.label_crop)
+        self.label_hint = QLabel('提示: 框内区域变透明, 其余像素不变, 输出保持原图尺寸')
         self.label_hint.setObjectName('secondaryLabel')
         self.label_hint.setFixedHeight(20)
-        cut_card.addWidget(self.label_hint)
+        clear_card.addWidget(self.label_hint)
         row = QHBoxLayout()
-        self.btn_cut = QPushButton('拆切')
+        self.btn_cut = QPushButton('透明化')
         self.btn_cut.setObjectName('primaryButton')
         self.btn_cut.setEnabled(False)
-        self.btn_cut.clicked.connect(self._do_cut)
+        self.btn_cut.clicked.connect(self._do_transparent)
         row.addWidget(self.btn_cut)
         self.progress_bar = QProgressBar()
         self.progress_bar.setFormat('%v/%m  帧')
         row.addWidget(self.progress_bar, 1)
-        cut_card.addLayout(row)
-        root.addWidget(cut_card)
+        clear_card.addLayout(row)
+        root.addWidget(clear_card)
 
         self.setCentralWidget(central)
 
@@ -426,10 +423,10 @@ class MainWindow(QMainWindow):
         size_txt = f'{uniq[0][0]}x{uniq[0][1]}' if len(uniq) == 1 else \
             f'{uniq[0][0]}x{uniq[0][1]} ~ {uniq[-1][0]}x{uniq[-1][1]}'
         self.label_info.setText(f'帧数: {len(sizes)}    尺寸: {size_txt}')
-        # 输出目录默认值: 同级下 输入文件夹名_裁剪
+        # 输出目录默认值: 同级下 输入文件夹名_透明
         if not self.edit_out.text().strip():
             self.edit_out.setText(os.path.join(os.path.dirname(self.folder),
-                                               os.path.basename(self.folder) + '_裁剪'))
+                                               os.path.basename(self.folder) + '_透明'))
         # 默认自动播放
         self.idx = 0
         self._show_frame(0)
@@ -461,20 +458,20 @@ class MainWindow(QMainWindow):
 
     def _on_rect_changed(self):
         if not self.pixmaps:
-            self.label_crop.setText('裁剪区: --')
+            self.label_crop.setText('框选区: --')
             return
         x, y, w, h = self.preview.edit.to_original(self.pixmaps[self.idx].width(),
                                                    self.pixmaps[self.idx].height())
-        self.label_crop.setText(f'裁剪区: x={x}, y={y}, w={w}, h={h} (原图坐标)')
+        self.label_crop.setText(f'框选区: x={x}, y={y}, w={w}, h={h} (原图坐标)')
 
-    # ---------------- 拆切 ----------------
+    # ---------------- 透明化 ----------------
     def _browse_out(self):
         path = QFileDialog.getExistingDirectory(self, '选择输出文件夹',
                                                 self.edit_out.text() or os.path.expanduser('~\\Desktop'))
         if path:
             self.edit_out.setText(path)
 
-    def _do_cut(self):
+    def _do_transparent(self):
         if not self.pixmaps:
             return
         out_dir = self.edit_out.text().strip()
@@ -497,7 +494,7 @@ class MainWindow(QMainWindow):
                     os.remove(os.path.join(out_dir, f))
         else:
             os.makedirs(out_dir, exist_ok=True)
-        # 归一化裁剪框 (各帧尺寸可能不同, 逐帧映射)
+        # 归一化框选区 (各帧尺寸可能不同, 逐帧映射)
         cw, ch = self.preview.edit.cw, self.preview.edit.ch
         x, y, w, h = self.preview.edit.rect
         nbox = (x / cw, y / ch, w / cw, h / ch)
@@ -507,7 +504,7 @@ class MainWindow(QMainWindow):
         self.btn_play.setText('播放')
         self.progress_bar.setRange(0, len(self.sizes))
         self.progress_bar.setValue(0)
-        self.worker_cut = CutWorker(self.folder, out_dir, *nbox)
+        self.worker_cut = TransparentWorker(self.folder, out_dir, *nbox)
         self.worker_cut.progress.connect(
             lambda cur, total: (self.progress_bar.setRange(0, total),
                                 self.progress_bar.setValue(cur)))
@@ -518,16 +515,13 @@ class MainWindow(QMainWindow):
     def _cut_failed(self, idx, msg):
         self.btn_cut.setEnabled(True)
         self.btn_play.setEnabled(True)
-        QMessageBox.critical(self, '拆切失败', f'帧 {idx}: {msg}')
+        QMessageBox.critical(self, '透明化失败', f'帧 {idx}: {msg}')
 
-    def _cut_done(self, out_dir, skipped):
+    def _cut_done(self, out_dir):
         self.btn_cut.setEnabled(True)
         self.btn_play.setEnabled(True)
         self.progress_bar.setValue(self.progress_bar.maximum())  # 进度条走满
-        msg = f'拆切完成!\n目录: {out_dir}'
-        if skipped:
-            msg += f'\n\n{skipped} 帧框内无真实内容, 已跳过'
-        QMessageBox.information(self, '完成', msg)
+        QMessageBox.information(self, '完成', f'透明化完成!\n目录: {out_dir}')
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
