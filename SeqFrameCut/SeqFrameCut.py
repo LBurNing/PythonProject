@@ -1,5 +1,5 @@
 # PySide6 序列帧透明化工具
-# 功能: 选择序列帧文件夹自动播放预览 / 拖拽框选区域 /
+# 功能: 选择序列帧文件夹自动播放预览 / 拖拽矩形框选区域 /
 #       「透明化」把每帧框内像素变透明, 其余不变, 输出保持原图尺寸 (保留原文件名)
 import os
 import re
@@ -7,16 +7,21 @@ import sys
 
 from PIL import Image
 from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QBrush, QColor, QImage, QPainter, QPainterPath, QPalette, QPixmap
+from PySide6.QtGui import (QBrush, QColor, QImage, QPainter, QPalette, QPen, QPixmap)
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QLineEdit, QMainWindow, QMessageBox, QProgressBar,
-                               QProgressDialog, QPushButton, QSpinBox, QVBoxLayout,
-                               QWidget)
+                               QProgressDialog, QPushButton, QVBoxLayout, QWidget)
 
-from eraser import apply_effect
+from rect_edit import RectEdit
 
 PLAY_INTERVAL = 80   # 播放帧间隔 ms (12.5fps)
 SUPPORTED = ('.png', '.jpg', '.jpeg', '.bmp', '.webp')
+
+CURSORS = {'tl': Qt.SizeFDiagCursor, 'tr': Qt.SizeBDiagCursor,
+           'bl': Qt.SizeBDiagCursor, 'br': Qt.SizeFDiagCursor,
+           'l': Qt.SizeHorCursor, 'r': Qt.SizeHorCursor,
+           't': Qt.SizeVerCursor, 'b': Qt.SizeVerCursor,
+           'move': Qt.SizeAllCursor}
 
 
 def pil_to_qimage(im):
@@ -24,16 +29,6 @@ def pil_to_qimage(im):
     im = im.convert('RGBA')
     data = im.tobytes('raw', 'RGBA')
     return QImage(data, im.width, im.height, im.width * 4, QImage.Format_RGBA8888).copy()
-
-
-def qimage_to_pil(qimg):
-    """QImage -> PIL Image (预览虚化用)"""
-    qimg = qimg.convertToFormat(QImage.Format_RGBA8888)
-    w, h = qimg.width(), qimg.height()
-    buf = qimg.constBits()  # PySide6 新版本返回 memoryview, 旧版本 sip.voidptr
-    if hasattr(buf, 'setsize'):
-        buf.setsize(w * h * 4)
-    return Image.frombuffer('RGBA', (w, h), buf, 'raw', 'RGBA', 0, 1).copy()
 
 
 def natural_key(name):
@@ -82,20 +77,19 @@ class LoadWorker(QThread):
             self.failed.emit(str(e))
 
 
-class BlurWorker(QThread):
-    """后台虚化线程: 每帧把涂抹圆区域应用效果 (radius<=0 全透明, >0 高斯虚化), 其余像素不变。
-    circles: 归一化圆列表 [(nx, ny, nr), ...] (各帧尺寸不同也能正确映射)。
-    jpg/bmp 输入无 alpha, 转存 PNG 保留效果。"""
+class TransparentWorker(QThread):
+    """后台透明化线程: 每帧把框内区域覆盖为全透明, 其余像素不变 (输出保持原尺寸)。
+    归一化框 (nx, ny, nw, nh): 各帧尺寸不同也能正确映射。
+    jpg/bmp 输入无 alpha, 转存 PNG 保留透明。"""
     progress = Signal(int, int)
     done = Signal(str)
     failed = Signal(int, str)
 
-    def __init__(self, folder, out_dir, circles, radius, parent=None):
+    def __init__(self, folder, out_dir, nx, ny, nw, nh, parent=None):
         super().__init__(parent)
         self.folder = folder
         self.out_dir = out_dir
-        self.circles = circles
-        self.radius = radius
+        self.nbox = (nx, ny, nw, nh)
 
     def run(self):
         try:
@@ -103,13 +97,25 @@ class BlurWorker(QThread):
             files = sorted((f for f in os.listdir(self.folder)
                             if os.path.splitext(f)[1].lower() in SUPPORTED), key=natural_key)
             total = len(files)
+            nx, ny, nw, nh = self.nbox
             for i, f in enumerate(files):
                 src = os.path.join(self.folder, f)
                 with Image.open(src) as im:
-                    im = apply_effect(im, self.circles, self.radius)
+                    if im.mode != 'RGBA':
+                        im = im.convert('RGBA')
+                    w, h = im.width, im.height
+                    box = (round(nx * w), round(ny * h),
+                           round((nx + nw) * w), round((ny + nh) * h))
+                    box = (max(0, box[0]), max(0, box[1]),
+                           min(w, box[2]), min(h, box[3]))
+                    if box[2] > box[0] and box[3] > box[1]:
+                        # 框内直接覆盖全透明图块 (无需逐像素)
+                        overlay = Image.new('RGBA', (box[2] - box[0], box[3] - box[1]),
+                                            (0, 0, 0, 0))
+                        im.paste(overlay, (box[0], box[1]))
                     out_name = f
                     if os.path.splitext(f)[1].lower() in ('.jpg', '.jpeg', '.bmp'):
-                        out_name = os.path.splitext(f)[0] + '.png'  # 效果只能存 PNG
+                        out_name = os.path.splitext(f)[0] + '.png'  # 透明只能存 PNG
                     im.save(os.path.join(self.out_dir, out_name))
                 if i % 5 == 0 or i == total - 1:  # 最后一帧必发, 保证进度条走到头
                     self.progress.emit(i, total)
@@ -145,10 +151,10 @@ class SectionCard(QFrame):
 
 
 class PreviewLabel(QWidget):
-    """预览控件: 等比缩放居中显示当前帧 + 涂抹蒙版 (半径<=0 棋盘格透明, >0 实时虚化)。
-    按住鼠标拖动 = 笔刷涂抹, 圆以归一化坐标存储 (跨帧一致, 导出逐帧映射)。"""
-    erased = Signal()        # 涂抹内容变化(新增一笔/撤销)
-    erase_started = Signal()  # 开始涂抹 (主窗口暂停播放)
+    """预览控件: 等比缩放居中显示当前帧 + 矩形裁剪框 (框内实时显示透明效果)。
+    拖四边/四角调整大小, 拖内部整体移动; 框以显示坐标存储, 导出时归一化映射原图。"""
+    rect_changed = Signal()   # 裁剪框变化(拖动/重置)
+    rect_started = Signal()   # 开始拖动裁剪框 (主窗口暂停播放)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -157,13 +163,7 @@ class PreviewLabel(QWidget):
         self.offset = (0, 0)      # 图像显示区域左上角(控件内)
         self.scale = 1.0          # 显示缩放比例
         self.disp_size = (1, 1)   # 显示画布尺寸 (dw, dh)
-        self.circles = []         # 归一化涂抹圆 [(nx, ny, nr), ...]
-        self.brush_size = 40      # 笔刷直径 (原图像素)
-        self.blur_radius = 8      # 虚化半径 (原图像素, 0=完全透明)
-        self._last = None         # 拖动中上一位置 (显示坐标)
-        self._mask_version = 0    # 涂抹内容版本 (缓存失效用)
-        self._blur_pm = None      # 虚化预览缓存
-        self._blur_key = None
+        self.edit = RectEdit()
         self._checker = QBrush(make_checker())
         self.setAutoFillBackground(True)
         pal = self.palette()
@@ -174,34 +174,19 @@ class PreviewLabel(QWidget):
 
     # ---------- 帧与布局 ----------
     def set_frame(self, pm):
+        """换帧不重置裁剪框 (播放中框保持原位)"""
         self.pm = pm
         self._relayout()
         self.update()
 
-    def undo(self):
-        """撤销最后一笔 (可多次撤销)"""
-        if self.circles:
-            self.circles.pop()
-            self._mask_version += 1
-            self.erased.emit()
+    def reset_rect(self):
+        if self.pm:
+            self.edit.reset()
+            self.rect_changed.emit()
             self.update()
 
-    def _blurred_pm(self):
-        """虚化预览 (缓存): 帧/涂抹/半径/显示尺寸变化时重算, 否则直接返回"""
-        key = (id(self.pm), self._mask_version, self.blur_radius, self.disp_size)
-        if key == self._blur_key and self._blur_pm is not None:
-            return self._blur_pm
-        if not self.disp_pm:
-            return None
-        radius_show = max(0, round(self.blur_radius * self.scale))  # 显示像素半径
-        im = apply_effect(qimage_to_pil(self.disp_pm.toImage()),
-                          self.circles, radius_show)
-        self._blur_pm = QPixmap.fromImage(pil_to_qimage(im))
-        self._blur_key = key
-        return self._blur_pm
-
     def _relayout(self):
-        """按控件尺寸计算显示区域/缩放比例"""
+        """按控件尺寸计算显示区域/缩放比例, 裁剪框按比例换算"""
         w, h = self.width(), self.height()
         if not self.pm or w <= 1 or h <= 1:
             self.disp_pm = None
@@ -213,52 +198,38 @@ class PreviewLabel(QWidget):
         self.offset = ((w - dw) // 2, (h - dh) // 2)
         self.disp_size = (dw, dh)
         self.disp_pm = self.pm.scaled(dw, dh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        self.edit.resize_canvas(dw, dh)
         self.update()
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._relayout()
 
-    # ---------- 涂抹擦除交互 ----------
+    # ---------- 裁剪框交互 ----------
     def mousePressEvent(self, e):
         if not self.pm or e.button() != Qt.LeftButton:
             return
-        self.erase_started.emit()
-        self._last = e.position()
-        self._stroke(e.position())
+        px, py = e.position().x() - self.offset[0], e.position().y() - self.offset[1]
+        if self.edit.hit_test(px, py) is not None:
+            self.edit.start_drag(px, py)
+            self.rect_started.emit()
+            self.update()
 
     def mouseMoveEvent(self, e):
-        if self._last is not None:
-            self._stroke(e.position())
+        if not self.pm:
+            return
+        px, py = e.position().x() - self.offset[0], e.position().y() - self.offset[1]
+        if self.edit._drag:
+            r = self.edit.drag_to(px, py)
+            if r:
+                self.setCursor(CURSORS[r[0]])
+                self.rect_changed.emit()
+        else:
+            self.setCursor(CURSORS.get(self.edit.hit_test(px, py), Qt.ArrowCursor))
+        self.update()
 
     def mouseReleaseEvent(self, e):
-        self._last = None
-
-    def _stroke(self, pos):
-        """从上一位置到当前位置沿线插值画圆 (防快速拖动断点)"""
-        dw, dh = self.disp_size
-        if dw <= 0 or dh <= 0:
-            return
-        x = pos.x() - self.offset[0]
-        y = pos.y() - self.offset[1]
-        r_show = self.brush_size * self.scale / 2  # 笔刷半径 (显示坐标)
-        x0, y0 = self._last.x() - self.offset[0], self._last.y() - self.offset[1]
-        dist = ((x - x0) ** 2 + (y - y0) ** 2) ** 0.5
-        steps = max(1, int(dist / max(1.0, r_show)))
-        for i in range(1, steps + 1):
-            self._add_circle(x0 + (x - x0) * i / steps,
-                             y0 + (y - y0) * i / steps, r_show)
-        self._last = pos
-
-    def _add_circle(self, x, y, r_show):
-        """显示坐标圆 -> 归一化存储 (钳制到图像区域, 拖出边缘时贴边涂抹)"""
-        dw, dh = self.disp_size
-        nx = min(max(x / dw, 0.0), 1.0)
-        ny = min(max(y / dh, 0.0), 1.0)
-        self.circles.append((nx, ny, r_show / min(dw, dh)))
-        self._mask_version += 1
-        self.erased.emit()
-        self.update()
+        self.edit.end_drag()
 
     # ---------- 绘制 ----------
     def paintEvent(self, e):
@@ -267,25 +238,23 @@ class PreviewLabel(QWidget):
             return
         p = QPainter(self)
         p.drawPixmap(self.offset[0], self.offset[1], self.disp_pm)
-        # 涂抹蒙版: 半径<=0 覆盖棋盘格 (显示为透明), >0 贴虚化图 (实时效果)
-        if self.circles:
-            dw, dh = self.disp_size
-            path = QPainterPath()
-            for nx, ny, nr in self.circles:
-                cx = self.offset[0] + nx * dw
-                cy = self.offset[1] + ny * dh
-                r = nr * min(dw, dh)
-                path.addEllipse(cx - r, cy - r, r * 2, r * 2)
-            p.save()
-            p.setClipPath(path)
-            if self.blur_radius <= 0:
-                p.fillRect(self.offset[0], self.offset[1], dw, dh, self._checker)
-            else:
-                blurred = self._blurred_pm()
-                if blurred:
-                    p.drawPixmap(self.offset[0], self.offset[1], blurred)
-            p.restore()
+        # 框内实时显示透明效果 (棋盘格)
+        x, y, w, h = self.edit.rect
+        if w > 0 and h > 0:
+            p.fillRect(self.offset[0] + x, self.offset[1] + y, w, h, self._checker)
+        # 裁剪框: 橙色虚线边框 + 4 角 handle
+        rx, ry = self.offset[0] + x, self.offset[1] + y
+        pen = QPen(QColor('#ff6600'), 2)
+        pen.setStyle(Qt.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRect(rx, ry, w, h)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor('#ff6600'))
+        for hx, hy in ((x, y), (x + w, y), (x, y + h), (x + w, y + h)):
+            p.drawRect(rx + hx - x - 3, ry + hy - y - 3, 6, 6)
         p.end()
+
 
 
 class MainWindow(QMainWindow):
@@ -331,7 +300,7 @@ class MainWindow(QMainWindow):
         root.addWidget(file_card)
 
         # --- 预览卡片 ---
-        play_card = SectionCard('预览 (按住鼠标拖动涂抹擦除)', '#ff8800')
+        play_card = SectionCard('预览 (拖拽框上下左右框选透明区域)', '#ff8800')
         play_row = QHBoxLayout()
         self.btn_play = QPushButton('播放')
         self.btn_play.setObjectName('primaryButton')
@@ -341,33 +310,18 @@ class MainWindow(QMainWindow):
         self.label_frame_count.setObjectName('secondaryLabel')
         play_row.addWidget(self.label_frame_count)
         play_row.addStretch(1)
-        play_row.addWidget(QLabel('笔刷:'))
-        self.spin_brush = QSpinBox()
-        self.spin_brush.setRange(4, 500)
-        self.spin_brush.setValue(40)
-        self.spin_brush.setSuffix(' px')
-        self.spin_brush.valueChanged.connect(self._on_brush_changed)
-        play_row.addWidget(self.spin_brush)
-        play_row.addWidget(QLabel('模糊:'))
-        self.spin_blur = QSpinBox()
-        self.spin_blur.setRange(0, 50)
-        self.spin_blur.setValue(8)
-        self.spin_blur.setSuffix(' px')
-        self.spin_blur.setToolTip('0 = 完全透明')
-        self.spin_blur.valueChanged.connect(self._on_blur_changed)
-        play_row.addWidget(self.spin_blur)
-        btn_undo = QPushButton('撤销')
-        btn_undo.clicked.connect(self._undo_erase)
-        play_row.addWidget(btn_undo)
+        btn_reset = QPushButton('重置裁剪框')
+        btn_reset.clicked.connect(self._reset_rect)
+        play_row.addWidget(btn_reset)
         play_card.addLayout(play_row)
         self.preview = PreviewLabel()
-        self.preview.erased.connect(self._on_erased)
-        self.preview.erase_started.connect(self._on_erase_started)
+        self.preview.rect_changed.connect(self._on_rect_changed)
+        self.preview.rect_started.connect(self._on_rect_started)
         play_card.addWidget(self.preview, 1)
         root.addWidget(play_card, 1)
 
-        # --- 虚化卡片 ---
-        clear_card = SectionCard('虚化', '#00cc66')
+        # --- 透明化卡片 ---
+        clear_card = SectionCard('透明化', '#00cc66')
         row = QHBoxLayout()
         row.addWidget(QLabel('输出:'))
         self.edit_out = QLineEdit()
@@ -376,19 +330,19 @@ class MainWindow(QMainWindow):
         btn_out.clicked.connect(self._browse_out)
         row.addWidget(btn_out)
         clear_card.addLayout(row)
-        self.label_crop = QLabel('擦除: 0 笔')
+        self.label_crop = QLabel('框选区: --')
         self.label_crop.setObjectName('secondaryLabel')
         self.label_crop.setFixedHeight(20)
         clear_card.addWidget(self.label_crop)
-        self.label_hint = QLabel('提示: 涂抹区域实时虚化 (模糊 0 = 完全透明), 其余不变, 输出保持原图尺寸')
+        self.label_hint = QLabel('提示: 框内区域变透明, 其余像素不变, 输出保持原图尺寸')
         self.label_hint.setObjectName('secondaryLabel')
         self.label_hint.setFixedHeight(20)
         clear_card.addWidget(self.label_hint)
         row = QHBoxLayout()
-        self.btn_cut = QPushButton('虚化')
+        self.btn_cut = QPushButton('透明化')
         self.btn_cut.setObjectName('primaryButton')
         self.btn_cut.setEnabled(False)
-        self.btn_cut.clicked.connect(self._do_blur)
+        self.btn_cut.clicked.connect(self._do_transparent)
         row.addWidget(self.btn_cut)
         self.progress_bar = QProgressBar()
         self.progress_bar.setFormat('%v/%m  帧')
@@ -510,33 +464,31 @@ class MainWindow(QMainWindow):
         self.preview.set_frame(self.pixmaps[i])
         self.label_frame_count.setText(f'帧: {i + 1}/{len(self.pixmaps)}')
 
-    def _on_brush_changed(self, v):
-        self.preview.brush_size = v
+    def _reset_rect(self):
+        self.preview.reset_rect()
 
-    def _on_blur_changed(self, v):
-        self.preview.blur_radius = v
-        self.preview.update()  # 模糊半径变化重绘预览
-
-    def _undo_erase(self):
-        self.preview.undo()
-
-    def _on_erase_started(self):
-        """开始涂抹时暂停播放, 方便精细操作"""
+    def _on_rect_started(self):
+        """开始拖动裁剪框时暂停播放, 方便精细操作"""
         if self.timer.isActive():
             self.timer.stop()
             self.btn_play.setText('播放')
 
-    def _on_erased(self):
-        self.label_crop.setText(f'擦除: {len(self.preview.circles)} 笔')
+    def _on_rect_changed(self):
+        if not self.pixmaps:
+            self.label_crop.setText('框选区: --')
+            return
+        x, y, w, h = self.preview.edit.to_original(self.pixmaps[self.idx].width(),
+                                                   self.pixmaps[self.idx].height())
+        self.label_crop.setText(f'框选区: x={x}, y={y}, w={w}, h={h} (原图坐标)')
 
-    # ---------------- 虚化 ----------------
+    # ---------------- 透明化 ----------------
     def _browse_out(self):
         path = QFileDialog.getExistingDirectory(self, '选择输出文件夹',
                                                 self.edit_out.text() or os.path.expanduser('~\\Desktop'))
         if path:
             self.edit_out.setText(path)
 
-    def _do_blur(self):
+    def _do_transparent(self):
         if not self.pixmaps:
             return
         out_dir = self.edit_out.text().strip()
@@ -559,15 +511,17 @@ class MainWindow(QMainWindow):
                     os.remove(os.path.join(out_dir, f))
         else:
             os.makedirs(out_dir, exist_ok=True)
+        # 归一化裁剪框 (各帧尺寸可能不同, 逐帧映射)
+        cw, ch = self.preview.edit.cw, self.preview.edit.ch
+        x, y, w, h = self.preview.edit.rect
+        nbox = (x / cw, y / ch, w / cw, h / ch)
         self.btn_cut.setEnabled(False)
         self.btn_play.setEnabled(False)
         self.timer.stop()
         self.btn_play.setText('播放')
         self.progress_bar.setRange(0, len(self.sizes))
         self.progress_bar.setValue(0)
-        self.worker_cut = BlurWorker(self.folder, out_dir,
-                                     list(self.preview.circles),
-                                     self.spin_blur.value())
+        self.worker_cut = TransparentWorker(self.folder, out_dir, *nbox)
         self.worker_cut.progress.connect(
             lambda cur, total: (self.progress_bar.setRange(0, total),
                                 self.progress_bar.setValue(cur)))
@@ -578,13 +532,13 @@ class MainWindow(QMainWindow):
     def _cut_failed(self, idx, msg):
         self.btn_cut.setEnabled(True)
         self.btn_play.setEnabled(True)
-        QMessageBox.critical(self, '虚化失败', f'帧 {idx}: {msg}')
+        QMessageBox.critical(self, '透明化失败', f'帧 {idx}: {msg}')
 
     def _cut_done(self, out_dir):
         self.btn_cut.setEnabled(True)
         self.btn_play.setEnabled(True)
         self.progress_bar.setValue(self.progress_bar.maximum())  # 进度条走满
-        QMessageBox.information(self, '完成', f'虚化完成!\n目录: {out_dir}')
+        QMessageBox.information(self, '完成', f'透明化完成!\n目录: {out_dir}')
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
