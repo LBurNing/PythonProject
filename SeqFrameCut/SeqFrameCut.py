@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, Q
                                QLineEdit, QMainWindow, QMessageBox, QProgressBar,
                                QProgressDialog, QPushButton, QVBoxLayout, QWidget)
 
+from content_trim import shrink_box
 from rect_edit import RectEdit
 
 PLAY_INTERVAL = 80   # 播放帧间隔 ms (12.5fps)
@@ -78,9 +79,10 @@ class LoadWorker(QThread):
 
 
 class CutWorker(QThread):
-    """后台拆切线程: 按归一化裁剪框逐帧 crop 保存 (保留原文件名与 alpha)"""
+    """后台拆切线程: 按归一化裁剪框逐帧 crop 保存, 并自动收缩到框内真实内容。
+    全透明帧跳过 (完成时上报跳过数)。保留原文件名与 alpha。"""
     progress = Signal(int, int)
-    done = Signal(str)
+    done = Signal(str, int)  # 输出目录, 跳过的帧数
     failed = Signal(int, str)
 
     def __init__(self, folder, out_dir, nx, ny, nw, nh, parent=None):
@@ -95,6 +97,7 @@ class CutWorker(QThread):
             files = sorted((f for f in os.listdir(self.folder)
                             if os.path.splitext(f)[1].lower() in SUPPORTED), key=natural_key)
             total = len(files)
+            skipped = 0
             nx, ny, nw, nh = self.nbox
             for i, f in enumerate(files):
                 src = os.path.join(self.folder, f)
@@ -104,13 +107,21 @@ class CutWorker(QThread):
                            round((nx + nw) * w), round((ny + nh) * h))
                     box = (max(0, box[0]), max(0, box[1]),
                            min(w, box[2]), min(h, box[3]))
-                    im = im.crop(box)
+                    if box[2] <= box[0] or box[3] <= box[1]:
+                        skipped += 1
+                        continue
+                    shrink = shrink_box(im, box)  # 收缩到框内真实内容
+                    if shrink is None:             # 框内全透明, 跳过
+                        skipped += 1
+                        continue
+                    x, y, cw, ch = shrink
+                    im = im.crop((x, y, x + cw, y + ch))
                     if os.path.splitext(f)[1].lower() in ('.jpg', '.jpeg', '.bmp'):
                         im = im.convert('RGB')
                     im.save(os.path.join(self.out_dir, f))
                 if i % 5 == 0 or i == total - 1:  # 最后一帧必发, 保证进度条走到头
                     self.progress.emit(i, total)
-            self.done.emit(self.out_dir)
+            self.done.emit(self.out_dir, skipped)
         except Exception as e:
             self.failed.emit(0, str(e))
 
@@ -315,6 +326,10 @@ class MainWindow(QMainWindow):
         self.label_crop.setObjectName('secondaryLabel')
         self.label_crop.setFixedHeight(20)
         cut_card.addWidget(self.label_crop)
+        self.label_hint = QLabel('提示: 拆切时自动收缩到框内真实内容, 多余透明边自动去除')
+        self.label_hint.setObjectName('secondaryLabel')
+        self.label_hint.setFixedHeight(20)
+        cut_card.addWidget(self.label_hint)
         row = QHBoxLayout()
         self.btn_cut = QPushButton('拆切')
         self.btn_cut.setObjectName('primaryButton')
@@ -505,11 +520,14 @@ class MainWindow(QMainWindow):
         self.btn_play.setEnabled(True)
         QMessageBox.critical(self, '拆切失败', f'帧 {idx}: {msg}')
 
-    def _cut_done(self, out_dir):
+    def _cut_done(self, out_dir, skipped):
         self.btn_cut.setEnabled(True)
         self.btn_play.setEnabled(True)
         self.progress_bar.setValue(self.progress_bar.maximum())  # 进度条走满
-        QMessageBox.information(self, '完成', f'拆切完成!\n目录: {out_dir}')
+        msg = f'拆切完成!\n目录: {out_dir}'
+        if skipped:
+            msg += f'\n\n{skipped} 帧框内无真实内容, 已跳过'
+        QMessageBox.information(self, '完成', msg)
 
     def closeEvent(self, event):
         if self.worker and self.worker.isRunning():
