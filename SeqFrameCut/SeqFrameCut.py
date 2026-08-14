@@ -91,6 +91,7 @@ class CutWorker(QThread):
 
     def run(self):
         try:
+            os.makedirs(self.out_dir, exist_ok=True)  # 防御: 输出目录不存在则创建
             files = sorted((f for f in os.listdir(self.folder)
                             if os.path.splitext(f)[1].lower() in SUPPORTED), key=natural_key)
             total = len(files)
