@@ -1,9 +1,9 @@
 # -*- mode: python ; coding: utf-8 -*-
-# 序列帧优化工具打包配置 (参考 Gif2PngUI.spec)
+# onedir 模式:exe + 依赖库(exe 启动快,不打包解压)
 
 
 a = Analysis(
-    ['D:/PythonProject/SeqFrameTool/SeqFrameTool.py'],
+    ['main.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -20,10 +20,9 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
-    name='序列帧优化',
+    exclude_binaries=True,
+    name='地图导出工具',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -36,4 +35,13 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='地图导出工具',
 )
