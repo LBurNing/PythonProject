@@ -35,6 +35,7 @@ STD_DTYPE = np.dtype([
     ("tile_anim_offset", "<i4"),
     ("tile_anim_frames", "u1"),
     ("light", "u1"),
+    ("area", "u1"),          # 12 字节旧格式:Objects 资源文件号-1(front 槽位 = 120+area)
 ])
 
 # ---- 各格式原始布局(itemsize 显式固定,防对齐填充)----
@@ -60,6 +61,15 @@ T3_DTYPE = np.dtype([
     ("tile_anim_frames", "u1"),
     ("tile_anim_offset", "<i2"),
     ("pad2", "u1", 14),             # 光照/混合相关,不用
+])
+
+# Type2 旧版(12 字节/格,数据从 52 起):无 FrontIndex/BackIndex/MiddleIndex 索引,
+# 用 Area 定位 Objects 资源(front 槽位 = 120 + Area,即 Objects{Area+1})
+T12_DTYPE = np.dtype([
+    ("back_image", "<i2"), ("middle_image", "<i2"), ("front_image", "<i2"),
+    ("door_index", "u1"), ("door_offset", "u1"),
+    ("front_anim_frame", "u1"), ("front_anim_tick", "u1"),
+    ("area", "u1"), ("light", "u1"),
 ])
 
 # Type100(26 字节/格,数据从 8 起;BackImage 是 Int32,Index 在 Image 前)
@@ -96,7 +106,10 @@ def detect_format(data: bytes) -> int:
     if data[4] == 0x0F and data[18] == 0x0D and data[19] == 0x0A:
         w = data[0] | (data[1] << 8)
         h = data[2] | (data[3] << 8)
-        return 3 if len(data) > 52 + w * h * 14 else 2
+        need14 = 52 + w * h * 14
+        if len(data) > need14:
+            return 3
+        return 2                          # 14 或 12 字节/格,由 _parse_t2 区分
     if data[0] == 0x0D and data[1] == 0x4C and data[7] == 0x20 and data[11] == 0x6D:
         raise MapParseError("Type7(3/4 英雄)暂不支持")
     return 2                                   # 默认旧格式
@@ -121,19 +134,38 @@ def _check_len(data: bytes, need: int, fmt: str) -> None:
 def _parse_t2(data: bytes) -> tuple[int, int, np.ndarray]:
     w, h = struct.unpack_from("<hh", data, 0)
     _check_w_h(w, h)
-    _check_len(data, 52 + w * h * 14, "Type2")
-    raw = np.frombuffer(data, dtype=T2_DTYPE, count=w * h, offset=52).reshape(w, h)
-    cells = np.zeros((w, h), dtype=STD_DTYPE)
-    for f in ("back_image", "middle_image", "front_image"):
-        cells[f] = raw[f]
-    cells["door_index"] = raw["door_index"] & 0x7F
-    cells["door_offset"] = raw["door_offset"]
-    cells["front_anim_frame"] = raw["front_anim_frame"]
-    cells["front_anim_tick"] = raw["front_anim_tick"]
-    cells["light"] = raw["light"]
-    cells["front_index"] = raw["front_index_raw"].astype(np.int32) + 120
-    cells["back_index"] = raw["back_index_raw"].astype(np.int32) + 100
-    cells["middle_index"] = raw["middle_index_raw"].astype(np.int32) + 110
+    n = len(data)
+    need14 = 52 + w * h * 14
+    need12 = 52 + w * h * 12
+    if n >= need14:
+        raw = np.frombuffer(data, dtype=T2_DTYPE, count=w * h, offset=52).reshape(w, h)
+        cells = np.zeros((w, h), dtype=STD_DTYPE)
+        for f in ("back_image", "middle_image", "front_image"):
+            cells[f] = raw[f]
+        cells["door_index"] = raw["door_index"] & 0x7F
+        cells["door_offset"] = raw["door_offset"]
+        cells["front_anim_frame"] = raw["front_anim_frame"]
+        cells["front_anim_tick"] = raw["front_anim_tick"]
+        cells["light"] = raw["light"]
+        cells["front_index"] = raw["front_index_raw"].astype(np.int32) + 120
+        cells["back_index"] = raw["back_index_raw"].astype(np.int32) + 100
+        cells["middle_index"] = raw["middle_index_raw"].astype(np.int32) + 110
+    elif n >= need12:
+        # 12 字节/格旧格式:无索引字段,front 槽位 = 120 + area(渲染层处理)
+        raw = np.frombuffer(data, dtype=T12_DTYPE, count=w * h, offset=52).reshape(w, h)
+        cells = np.zeros((w, h), dtype=STD_DTYPE)
+        for f in ("back_image", "middle_image", "front_image"):
+            cells[f] = raw[f]
+        cells["door_index"] = raw["door_index"] & 0x7F
+        cells["door_offset"] = raw["door_offset"]
+        cells["front_anim_frame"] = raw["front_anim_frame"]
+        cells["front_anim_tick"] = raw["front_anim_tick"]
+        cells["light"] = raw["light"]
+        cells["area"] = raw["area"]
+    else:
+        raise MapParseError(
+            f"Type2 文件长度不足:需要 {need14}(14字节) 或 {need12}(12字节) 字节,"
+            f"实际 {n}")
     _bit15_to_bit29(cells["back_image"])
     return w, h, cells
 
@@ -207,6 +239,12 @@ class MapReader:
         data = path.read_bytes()
         self.format_type = detect_format(data)
         self.width, self.height, self.cells = parse_map(data, self.format_type)
+        # 每格字节数:Type2=14(旧版 12), Type100=26, Type3=40
+        if self.format_type == 2:
+            need12 = 52 + self.width * self.height * 12
+            self.cell_bytes = 12 if len(data) < 52 + self.width * self.height * 14 else 14
+        else:
+            self.cell_bytes = {"100": 26, "3": 40}[str(self.format_type)]
 
     @property
     def map_name(self) -> str:

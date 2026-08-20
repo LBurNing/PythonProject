@@ -1,0 +1,14 @@
+# 构建产物
+build/
+dist/
+*.spec.bak
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# 导出测试结果
+output/
+导出结果*/
+预览/

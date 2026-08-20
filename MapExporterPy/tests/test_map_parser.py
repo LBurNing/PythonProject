@@ -56,6 +56,32 @@ def test_detect_default_type2():
     assert detect_format(data) == 2
 
 
+def test_parse_12_bytes_cell(tmp_path):
+    # 12 字节/格旧格式:52 + 2*2*12 = 100 字节,可直接解析
+    header = bytearray(52)
+    header[0:2] = struct.pack("<h", 2)
+    header[2:4] = struct.pack("<h", 2)
+    header[4] = 0x0F
+    header[18] = 0x0D
+    header[19] = 0x0A
+    # 12 字节/格:back i16, mid i16, front i16, door_idx u1, door_off u1,
+    #           anim u1, tick u1, area u1, light u1
+    cells12 = struct.pack("<hhhBBBBBB", 3, 0, 5, 0x10, 0, 0x81, 1, 45, 0)
+    assert len(cells12) == 12
+    p = tmp_path / "old.map"
+    p.write_bytes(bytes(header) + cells12 * 4)     # 2x2 格 = 100 字节
+
+    reader = MapReader(p)
+    assert reader.cell_bytes == 12
+    assert (reader.width, reader.height) == (2, 2)
+    c = reader.cells[0, 0]
+    assert int(c["front_image"]) == 5
+    assert int(c["front_index"]) == 0              # 无索引字段
+    assert int(c["area"]) == 45
+    assert int(c["front_anim_frame"]) == 0x81      # blend 标志保留
+    assert int(c["door_index"]) == 0x10
+
+
 def test_detect_unsupported_formats_raise():
     # Wemade Mir3(空字节开头)已覆盖;再验证 2010 加密
     data = bytearray(52)

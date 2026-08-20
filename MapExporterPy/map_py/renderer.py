@@ -26,6 +26,12 @@ class RenderConfig:
     out_root: Path
     texture_max_size: int = 16384      # 超过任一维 → 分块(MapTools.cs:90)
     block_divisor: int = 10            # 块大小 = 大图 / 10(整数除法)
+    map_name: str | None = None        # 导出地图名(默认取 .map 文件名)
+    export_anim: bool = False          # 是否导出动画序列帧
+    img_format: str = "jpg"            # 大图格式:jpg / png(默认 jpg)
+    jpg_quality: int = 90              # jpg 品质(1-100)
+    bg_color: tuple[int, int, int] = (0, 0, 0)   # jpg 透明背景色(默认黑)
+    preview: bool = False          # 预览模式:跳过 alpha 混合(快速渲染)
 
 
 class Renderer:
@@ -46,19 +52,29 @@ class Renderer:
         self._progress(0, 1, "解析绘制操作...")
         self._collect_ops()
         total = len(self._ops)
+        steps = total + 2               # 绘制 + 保存 + 动画/JSON 收尾
 
         if pw > self._cfg.texture_max_size or ph > self._cfg.texture_max_size:
-            self._render_blocks(pw, ph, total)
+            self._render_blocks(pw, ph, steps)
         else:
             buf = np.zeros((ph, pw, 4), np.uint8)
             for i, op in enumerate(self._ops):
                 self._blend_into(buf, op)
-                if i % 20000 == 0:
-                    self._progress(i, total, "绘制中...")
-            self._progress(total, total, "保存 PNG...")
-            self._save_texture(buf, self._reader.map_name)
-        self._save_animations()
-        self._save_json()
+                if i % 10 == 0:
+                    self._progress(i, steps, "绘制中...")
+            self._progress(total, steps, f"保存 {self._cfg.img_format.upper()}...")
+            self._save_texture(buf, self.export_name)
+        # 动画 JSON 与序列帧:仅勾选"导出动画"时输出
+        if self._cfg.export_anim:
+            self._progress(total + 1, steps, "导出动画...")
+            self._save_animations()
+            self._save_json()
+        self._progress(steps, steps, "完成")
+
+    @property
+    def export_name(self) -> str:
+        """导出名:配置覆盖或 .map 文件名。"""
+        return self._cfg.map_name or self._reader.map_name
 
     # ---------------- 操作收集(严格复刻三层循环) ----------------
 
@@ -109,6 +125,9 @@ class Renderer:
                 cell = cells[x, y]
                 img = (int(cell["front_image"]) & 0x7FFF) - 1   # bit15 混合标志
                 lib = int(cell["front_index"])
+                if lib == 0:
+                    # 12 字节旧格式:无索引字段,front 槽位 = 120 + area(Objects{area+1})
+                    lib = 120 + int(cell["area"])
                 dx = x * CELL_WIDTH
                 anim = int(cell["front_anim_frame"])
                 blend = (anim & 0x80) > 0
@@ -201,6 +220,13 @@ class Renderer:
         mask = src.any(axis=2)                     # Color.clear(0,0,0,0) 才跳过
         if not mask.any():
             return
+        if self._cfg.preview:
+            # 预览模式:跳过 Alpha 混合,不透明像素直接覆盖(快速渲染)
+            dst2 = dst.copy()
+            dst2[..., :3] = np.where(mask[..., None], src[..., :3], dst[..., :3])
+            dst2[..., 3] = np.where(mask, src[..., 3], dst[..., 3])
+            buf[y0:y1, x0:x1] = dst2
+            return
         s = src.astype(np.float32) / 255.0
         d = dst.astype(np.float32) / 255.0
         sa = s[..., 3:4]
@@ -216,7 +242,7 @@ class Renderer:
 
     # ---------------- 输出 ----------------
 
-    def _render_blocks(self, pw: int, ph: int, total: int) -> None:
+    def _render_blocks(self, pw: int, ph: int, steps: int) -> None:
         """分块路径(MapTools.cs InitList/SaveMapBlockTexture + MapBlock)。"""
         bs_x = pw // self._cfg.block_divisor        # C# 整数除法
         bs_y = ph // self._cfg.block_divisor
@@ -244,33 +270,43 @@ class Renderer:
                 # 块名 = C# GetName:(blockYCount-1-_y)+"_"+_x = row+"_"+col
                 self._save_texture(buf, f"{row}_{col}")
                 done += 1
-                self._progress(done, by_count * bx_count, "导出分块...")
+                self._progress(done, steps, "导出分块...")
 
     def _save_texture(self, buf: np.ndarray, name: str) -> None:
-        path = self._tiles_dir / f"{name}.png"
-        Image.fromarray(buf, "RGBA").save(path)
+        """保存大图:jpg(默认,透明合黑底)或 png。"""
+        fmt = self._cfg.img_format.lower()
+        path = self._tiles_dir / f"{name}.{fmt}"
+        if fmt == "jpg":
+            # JPEG 无 alpha:透明像素合成背景色
+            rgb = buf[..., :3].copy()
+            alpha = buf[..., 3]
+            rgb[alpha == 0] = self._cfg.bg_color
+            Image.fromarray(rgb, "RGB").save(path, quality=self._cfg.jpg_quality)
+        else:
+            Image.fromarray(buf, "RGBA").save(path)
 
     def _save_json(self) -> None:
-        """动画 JSON(animationDataList,C# JsonConvert 序列化),与大图同目录。"""
+        """动画 JSON(animationDataList,C# JsonConvert 序列化),与大图同目录。
+        文件名为 {导出名}_anim.json。"""
         anim_json = json.dumps(
             [{"animationName": f"{img:06d}", "x": x, "y": y}
              for _, img, x, y, _ in self._animations],
             separators=(",", ":"))
-        (self._json_dir / f"{self._reader.map_name}.json").write_text(anim_json, "utf-8")
+        (self._json_dir / f"{self.export_name}_anim.json").write_text(anim_json, "utf-8")
 
     def _save_animations(self) -> None:
         """导出动画序列帧与定位文件(参考 C# 导出规则):
 
-        {out}/{mapName}/Animation/{mapName}_{img:06d}/
+        {out}/{mapName}/anims/{mapName}_{img:06d}/
             50000+k.png            # 帧图 = 资源库 index+k(k=0..动画帧数-1)
             Placements/50000+k.txt # 两行:图头 px、py(绘制偏移)
         """
-        anim_root = self._cfg.out_root / self._reader.map_name / "Animation"
+        anim_root = self._cfg.out_root / self.export_name / "anims"
         for lib, img, x, y, anim in self._animations:
             lib_obj = self._libs.get(lib)
             if lib_obj is None:
                 continue
-            folder = anim_root / f"{self._reader.map_name}_{img:06d}"
+            folder = anim_root / f"{self.export_name}_{img:06d}"
             folder.mkdir(parents=True, exist_ok=True)
             placements = folder / "Placements"
             placements.mkdir(parents=True, exist_ok=True)
@@ -287,8 +323,8 @@ class Renderer:
 
     @property
     def _tiles_dir(self) -> Path:
-        # 简化路径:{out}/{mapName}/(用户要求去除深路径)
-        p = self._cfg.out_root / self._reader.map_name
+        # 简化路径:{out}/{导出名}/(用户要求去除深路径)
+        p = self._cfg.out_root / self.export_name
         p.mkdir(parents=True, exist_ok=True)
         return p
 

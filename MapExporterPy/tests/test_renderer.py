@@ -68,7 +68,8 @@ def test_render_single_tile(tmp_path):
     reader = make_reader(tmp_path, 2, 2, cell * 4)
     libs = make_libs(tmp_path)
     out = tmp_path / "out"
-    Renderer(reader, libs, RenderConfig(out_root=out)).run()
+    Renderer(reader, libs, RenderConfig(out_root=out, img_format="png",
+                                        export_anim=True)).run()
 
     img_path = out / "m" / "m.png"
     assert img_path.is_file()
@@ -84,7 +85,7 @@ def test_render_single_tile(tmp_path):
     # 地面只画偶数格:(1,0) 格空白
     np.testing.assert_array_equal(img[0, CELL_WIDTH], [0, 0, 0, 0])
     # JSON(animationDataList,与图片同目录)
-    info = json.loads((out / "m" / "m.json").read_text("utf-8"))
+    info = json.loads((out / "m" / "m_anim.json").read_text("utf-8"))
     assert info == []
 
 
@@ -94,7 +95,7 @@ def test_render_alpha_blend(tmp_path):
     reader = make_reader(tmp_path, 1, 1, cell)
     libs = make_libs(tmp_path)
     out = tmp_path / "out"
-    Renderer(reader, libs, RenderConfig(out_root=out)).run()
+    Renderer(reader, libs, RenderConfig(out_root=out, img_format="png")).run()
     from PIL import Image
     from map_py.palette import PALETTE
     img = np.array(Image.open(out / "m" / "m.png").convert("RGBA"))
@@ -110,17 +111,18 @@ def test_render_blend_animation(tmp_path):
     reader = make_reader(tmp_path, 1, 1, cell)
     libs = {320: MLibrary(make_wzl(tmp_path, "Objects201", 6, 6, 3, py=-3))}
     out = tmp_path / "out"
-    Renderer(reader, libs, RenderConfig(out_root=out)).run()
+    Renderer(reader, libs, RenderConfig(out_root=out, img_format="png",
+                                        export_anim=True)).run()
     from PIL import Image
     img = np.array(Image.open(out / "m" / "m.png").convert("RGBA"))
     assert not img.any()                        # blend 动画瓦片不画(全透明)
 
     # JSON:animationDataList(槽 320>199 → drawY-s.Height=(0+1)*32-6=26)
-    info = json.loads((out / "m" / "m.json").read_text("utf-8"))
+    info = json.loads((out / "m" / "m_anim.json").read_text("utf-8"))
     assert info == [{"animationName": "000000", "x": 0, "y": 26}]
 
     # 帧图:1 帧(50000.png = 资源库 img 0),该库只有 1 张 → 无 50001
-    anim = out / "m" / "Animation" / "m_000000"
+    anim = out / "m" / "anims" / "m_000000"
     assert (anim / "50000.png").is_file()
     assert not (anim / "50001.png").exists()    # img=1 越界,无帧
     # txt:图头 px/py 两行
@@ -133,9 +135,10 @@ def test_render_json_paths(tmp_path):
     reader = make_reader(tmp_path, 1, 1, cell)
     libs = make_libs(tmp_path)
     out = tmp_path / "out"
-    Renderer(reader, libs, RenderConfig(out_root=out)).run()
+    Renderer(reader, libs, RenderConfig(out_root=out, img_format="png",
+                                        export_anim=True)).run()
     assert (out / "m" / "m.png").is_file()
-    assert (out / "m" / "m.json").is_file()
+    assert (out / "m" / "m_anim.json").is_file()
 
 
 # ---------------- 分块路径 ----------------
@@ -147,7 +150,7 @@ def test_render_blocks(tmp_path):
     reader = make_reader(tmp_path, 30, 1, cell * 30)     # 1440x32
     libs = make_libs(tmp_path)
     out = tmp_path / "out"
-    cfg = RenderConfig(out_root=out, texture_max_size=200)
+    cfg = RenderConfig(out_root=out, texture_max_size=200, img_format="png")
     Renderer(reader, libs, cfg).run()
 
     # bs_x = 1440//10 = 144, bs_y = 32//10 = 3;bx=10, by=11
