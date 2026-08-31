@@ -141,28 +141,20 @@ def test_render_json_paths(tmp_path):
     assert (out / "m" / "m_anim.json").is_file()
 
 
-# ---------------- 分块路径 ----------------
+# ---------------- 大图单张输出 ----------------
 
-def test_render_blocks(tmp_path):
-    # 强制分块(>16384):合成大图 1x500 格 → 48 x 16000 像素(高>16384 不足,
-    # 用自定义 texture_max_size=100 触发分块)
+def test_render_big_map_single_image(tmp_path):
+    # 超过 C# Unity 16384 限制的大图:Python 直接输出单张完整大图
+    # 30x30 格 → 1440x960 像素(合成大图模拟;真实 47952x31968 同样逻辑)
     cell = t2(back_img=1)
-    reader = make_reader(tmp_path, 30, 1, cell * 30)     # 1440x32
+    reader = make_reader(tmp_path, 30, 30, np.tile(cell, (30, 30)).tobytes())
     libs = make_libs(tmp_path)
     out = tmp_path / "out"
-    cfg = RenderConfig(out_root=out, texture_max_size=200, img_format="png")
-    Renderer(reader, libs, cfg).run()
+    Renderer(reader, libs, RenderConfig(out_root=out, img_format="png")).run()
 
-    # bs_x = 1440//10 = 144, bs_y = 32//10 = 3;bx=10, by=11
     from PIL import Image
-    tiles = sorted(out.glob("m/*.png"))
-    assert len(tiles) == 11 * 10
-    # 瓦片正立画在顶部(dy=0 → 块 0_0)
     from map_py.palette import PALETTE
-    img = np.array(Image.open(out / "m" / "0_0.png").convert("RGBA"))
+    img = np.array(Image.open(out / "m" / "m.png").convert("RGBA"))
+    assert img.shape == (960, 1440, 4)               # 单张,无 0_0.png 分块
     np.testing.assert_array_equal(img[0, 0], PALETTE[1])
-    # 底行块覆盖全局 y 30..32,瓦片在顶部(y 0..1) → 底块应全透明
-    last = np.array(Image.open(out / "m" / "10_0.png").convert("RGBA"))
-    assert last.shape[0] == 3
-    np.testing.assert_array_equal(last[0, 0], [0, 0, 0, 0])
-    np.testing.assert_array_equal(last[2, 0], [0, 0, 0, 0])
+    assert not list(out.glob("m/*_*.png"))           # 无分块文件

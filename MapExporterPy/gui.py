@@ -5,21 +5,20 @@
 
 import os
 import sys
-import tempfile
+import time
 from pathlib import Path
 
-from PySide6.QtCore import QTimer, Qt, QThread, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QTimer, QThread, Signal
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog,
                                QFrame, QHBoxLayout, QLabel, QLineEdit,
                                QMainWindow, QMessageBox, QProgressBar,
-                               QPushButton, QSizePolicy, QSpinBox, QVBoxLayout,
-                               QWidget)
+                               QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from main import export_map, scan_libraries
 from map_py.map_parser import MapParseError, MapReader
-from map_py.renderer import RenderConfig, Renderer
-from map_py.wil_library import PngLibrary
+from map_py.renderer import RenderConfig
+from map_py.wil_library import (MLibrary, PakLibrary, PngLibrary,
+                                WilLibrary)
 
 
 class SectionCard(QFrame):
@@ -29,17 +28,18 @@ class SectionCard(QFrame):
         super().__init__(parent)
         self.setObjectName("sectionCard")
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(12, 10, 12, 12)
-        outer.setSpacing(8)
+        outer.setContentsMargins(12, 5, 12, 8)
+        outer.setSpacing(5)
         header = QLabel(title)
         header.setStyleSheet(
-            f"QLabel {{ color: #c8c8dc; font-weight: bold; font-size: 11px; "
+            f"QLabel {{ color: #c8c8dc; font-weight: bold; font-size: 10px; "
             f"border-left: 3px solid {accent}; padding-left: 8px; "
-            f"padding-top: 1px; padding-bottom: 1px; }}"
+            f"padding-top: 0px; padding-bottom: 0px; }}"
         )
+        header.setFixedHeight(20)      # 所有卡片标题行高固定一致
         outer.addWidget(header)
         self.content = QVBoxLayout()
-        self.content.setSpacing(7)
+        self.content.setSpacing(6)
         outer.addLayout(self.content)
 
     def addWidget(self, w):
@@ -61,17 +61,24 @@ class ExportWorker(QThread):
         self.map_paths = list(map_paths)
         self.data_dir = data_dir
         self.cfg = cfg
+        self.map_times: list[tuple[str, float]] = []   # (地图名, 耗时秒)
+        self.total_time = 0.0
 
     def run(self):
         try:
+            t_start = time.time()
             self.progress.emit(0, 0, "扫描资源...")
             libs = scan_libraries(self.data_dir)
             if not libs:
-                self.failed.emit("未找到资源库(图片目录或 WZL/WZX)")
+                self.failed.emit("未找到资源库(图片目录或 WZL/WIL/PAK)")
                 return
             names = []
             for p in self.map_paths:
-                names.append(export_map(p, libs, self.cfg, self.progress.emit))
+                t0 = time.time()
+                name = export_map(p, libs, self.cfg, self.progress.emit)
+                self.map_times.append((name, time.time() - t0))
+                names.append(name)
+            self.total_time = time.time() - t_start
             self.done.emit("\n".join(names))
         except (MapParseError, FileNotFoundError) as e:
             self.failed.emit(str(e))
@@ -79,38 +86,11 @@ class ExportWorker(QThread):
             self.failed.emit(f"{type(e).__name__}: {e}")
 
 
-class PreviewWorker(QThread):
-    """后台预览渲染线程:快速模式渲染地图并生成缩略图。"""
-
-    done = Signal(str)                    # 预览图路径
-    failed = Signal(str)
-    progress = Signal(int, int, str)
-
-    def __init__(self, data_dir, map_path, parent=None):
-        super().__init__(parent)
-        self.data_dir = data_dir
-        self.map_path = map_path
-
-    def run(self):
-        try:
-            from PIL import Image as PILImage
-            libs = scan_libraries(self.data_dir)
-            if not libs:
-                self.failed.emit("未找到资源库(图片目录或 WZL/WZX)")
-                return
-            tmp = Path(tempfile.mkdtemp())
-            cfg = RenderConfig(out_root=tmp, preview=True, img_format="png",
-                               export_anim=False, map_name="preview")
-            reader = MapReader(self.map_path)
-            Renderer(reader, libs, cfg, self.progress.emit).run()
-            png = tmp / "preview" / "preview.png"
-            img = PILImage.open(png)
-            img.thumbnail((640, 480))
-            out = tmp / "preview_small.png"
-            img.save(out)
-            self.done.emit(str(out))
-        except Exception as e:
-            self.failed.emit(f"{type(e).__name__}: {e}")
+def _fmt_time(seconds: float) -> str:
+    """耗时格式化:小于 1 分钟显示秒,否则 分+秒。"""
+    if seconds < 60:
+        return f"{seconds:.1f} 秒"
+    return f"{int(seconds // 60)} 分 {seconds % 60:.0f} 秒"
 
 
 class MainWindow(QMainWindow):
@@ -121,7 +101,6 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 600)
         self.libs = {}
         self.worker = None
-        self._preview_pix = None
         self._build_ui()
         self.setStyleSheet(self._build_stylesheet())
 
@@ -135,47 +114,46 @@ class MainWindow(QMainWindow):
 
         # --- 文件卡片 ---
         file_card = SectionCard("地图与资源", "#4488ff")
-        row = QHBoxLayout()
-        row.addWidget(QLabel("数据文件夹:"))
+
+        def _path_row(label, edit, placeholder, browse_cb):
+            """一行:固定宽度右对齐标签 + 输入框 + 统一宽度浏览按钮。"""
+            row = QHBoxLayout()
+            lab = QLabel(label)
+            lab.setFixedWidth(84)                    # 88-4:文字左移 4px
+            lab.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            row.addWidget(lab)
+            edit.setPlaceholderText(placeholder)
+            row.addWidget(edit, 1)
+            btn = QPushButton("浏览...")
+            btn.setFixedWidth(72)
+            btn.clicked.connect(browse_cb)
+            row.addWidget(btn)
+            return row
+
         self.edit_data = QLineEdit()
-        self.edit_data.setPlaceholderText("包含 .map 与资源(Objects/SmTiles/Tiles 的 PNG 或 wzl)的文件夹")
         self.edit_data.textChanged.connect(
             lambda: QTimer.singleShot(500, self._update_info))
-        row.addWidget(self.edit_data, 1)
-        btn = QPushButton("浏览...")
-        btn.clicked.connect(self._browse_data)
-        row.addWidget(btn)
-        file_card.addLayout(row)
+        file_card.addLayout(_path_row(
+            "数据文件夹:", self.edit_data,
+            "包含 .map 与资源(Objects/SmTiles/Tiles 的 PNG/wzl/wil,可在子目录)的文件夹",
+            self._browse_data))
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("输出目录:"))
         self.edit_out = QLineEdit()
-        self.edit_out.setPlaceholderText("默认: 数据文件夹/导出结果")
-        row.addWidget(self.edit_out, 1)
-        btn = QPushButton("浏览...")
-        btn.clicked.connect(self._browse_out)
-        row.addWidget(btn)
-        file_card.addLayout(row)
+        file_card.addLayout(_path_row(
+            "输出目录:", self.edit_out,
+            "默认: 数据文件夹/导出结果",
+            self._browse_out))
         root.addWidget(file_card)
 
         # --- 信息卡片 ---
         info_card = SectionCard("地图信息", "#ff8800")
         self.label_info = QLabel("未选择数据文件夹")
         self.label_info.setObjectName("secondaryLabel")
+        self.label_info.setAlignment(Qt.AlignCenter)   # 未选择时居中显示
         self.label_info.setWordWrap(True)
+        self.label_info.setMinimumHeight(340)          # 地图详情区给足高度
         info_card.addWidget(self.label_info)
-
-        row = QHBoxLayout()
-        self.btn_preview = QPushButton("预览地图")
-        self.btn_preview.clicked.connect(self._preview)
-        row.addWidget(self.btn_preview)
-        self.label_preview = QLabel("")
-        self.label_preview.setAlignment(Qt.AlignCenter)
-        self.label_preview.setMinimumHeight(280)
-        self.label_preview.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        row.addWidget(self.label_preview, 1)
-        info_card.addLayout(row)
-        root.addWidget(info_card)
+        root.addWidget(info_card, 2)                   # 窗口放大时信息区优先扩展
 
         # --- 导出卡片 ---
         export_card = SectionCard("导出", "#00cc66")
@@ -241,17 +219,19 @@ class MainWindow(QMainWindow):
         #primaryButton:pressed { background: #cc5500; }
         #primaryButton:disabled { background: #2a2a3a; color: #606070; border-color: #323248; }
         QLineEdit {
-            background: #2e2e44; border: 1px solid #3e3e58; border-radius: 4px;
-            padding: 4px 8px; color: #e0e0e0; min-height: 22px;
+            background: #2e2e44; border: 1px solid #3e3e58; border-radius: 6px;
+            padding: 5px 10px; color: #e0e0e0; min-height: 24px; font-size: 12px;
         }
+        QLineEdit::placeholder { color: #5a5a72; }
         QLineEdit:hover { border-color: #4e4e6e; }
+        QLineEdit:focus { border-color: #ff8833; }
         QProgressBar {
             background: #2a2a3a; border: 1px solid #323248; border-radius: 4px;
             text-align: center; color: #e0e0e0; min-height: 20px;
         }
         QProgressBar::chunk { background: #ff6600; border-radius: 3px; }
         QLabel { color: #e0e0e0; }
-        #secondaryLabel { color: #9090a8; font-size: 11px; }
+        #secondaryLabel { color: #a8a8c0; font-size: 12px; }
         QMessageBox { background: #262638; color: #e0e0e0; }
         """
 
@@ -273,8 +253,10 @@ class MainWindow(QMainWindow):
     def _update_info(self):
         data_dir = self.edit_data.text().strip()
         if not data_dir or not Path(data_dir).is_dir():
+            self.label_info.setAlignment(Qt.AlignCenter)
             self.label_info.setText("未选择数据文件夹")
             return
+        self.label_info.setAlignment(Qt.AlignLeft | Qt.AlignTop)   # 有数据后左对齐
         maps = sorted(Path(data_dir).glob("*.map"))
         lines = []
         if not maps:
@@ -301,58 +283,18 @@ class MainWindow(QMainWindow):
             lines.append(f"资源检测失败: {e}")
         if libs:
             for slot, lib in sorted(libs.items()):
-                kind = "图片目录" if isinstance(lib, PngLibrary) else "WZL"
+                if isinstance(lib, PngLibrary):
+                    kind = "图片目录"
+                elif isinstance(lib, WilLibrary):
+                    kind = "WIL/WIX"
+                elif isinstance(lib, PakLibrary):
+                    kind = "PAK"
+                else:
+                    kind = "WZL/WZX"
                 lines.append(f"资源[{slot}]: {lib.name} ({kind})")
         else:
-            lines.append("警告: 未找到资源库(图片目录或 WZL/WZX)")
+            lines.append("警告: 未找到资源库(图片目录或 WZL/WIL/PAK)")
         self.label_info.setText("\n".join(lines))
-
-    # ---------------- 预览 ----------------
-
-    def _preview(self):
-        data_dir = self.edit_data.text().strip()
-        if not data_dir or not Path(data_dir).is_dir():
-            QMessageBox.warning(self, "提示", "请选择数据文件夹")
-            return
-        maps = sorted(Path(data_dir).glob("*.map"))
-        if not maps:
-            QMessageBox.warning(self, "提示", "未找到 .map 文件")
-            return
-        self.btn_preview.setEnabled(False)
-        self.label_preview.setText("渲染预览中...\n(大图可能需等待)")
-        self.preview_worker = PreviewWorker(data_dir, maps[0], self)
-        self.preview_worker.progress.connect(self._on_progress)
-        self.preview_worker.done.connect(self._preview_done)
-        self.preview_worker.failed.connect(self._preview_failed)
-        self.preview_worker.start()
-
-    def _preview_done(self, path):
-        self.btn_preview.setEnabled(True)
-        self.label_preview.setText("")
-        self._preview_pix = QPixmap(path)
-        if not self._preview_pix.isNull():
-            self._show_preview()
-        else:
-            self.label_preview.setText("预览图生成失败")
-
-    def _show_preview(self):
-        """按预览区当前大小缩放显示预览图(窗口/全屏自适应)。"""
-        if self._preview_pix is None or self._preview_pix.isNull():
-            return
-        avail = self.label_preview.size()
-        if avail.width() > 20 and avail.height() > 20:
-            pix = self._preview_pix.scaled(avail, Qt.KeepAspectRatio,
-                                           Qt.SmoothTransformation)
-            self.label_preview.setPixmap(pix)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._show_preview()
-
-    def _preview_failed(self, msg):
-        self.btn_preview.setEnabled(True)
-        self.label_preview.setText("")
-        QMessageBox.critical(self, "预览失败", msg)
 
     # ---------------- 导出 ----------------
 
@@ -402,13 +344,23 @@ class MainWindow(QMainWindow):
         self.progress.setFormat("完成")
         out_root = self.edit_out.text().strip()
         fmt = self.combo_fmt.currentText()
-        lines = ["导出完成!"]
+        times = {n: t for n, t in getattr(self.worker, "map_times", [])}
+        lines = [f"导出完成! 总耗时 {_fmt_time(self.worker.total_time)}"]
         for name in names.splitlines():
             img = Path(out_root) / name / f"{name}.{fmt}"
             size_mb = img.stat().st_size / 1024 / 1024 if img.is_file() else 0
-            lines.append(f"{name}.{fmt} ({size_mb:.1f} MB)")
+            cost = f", {_fmt_time(times[name])}" if name in times else ""
+            lines.append(f"{name}.{fmt} ({size_mb:.1f} MB{cost})")
         lines.append(f"目录: {Path(out_root)}")
-        QMessageBox.information(self, "完成", "\n".join(lines))
+        box = QMessageBox(self)
+        box.setWindowTitle("完成")
+        box.setIcon(QMessageBox.Information)
+        box.setText("\n".join(lines))
+        btn_open = box.addButton("打开文件夹", QMessageBox.AcceptRole)
+        box.addButton("确定", QMessageBox.AcceptRole)
+        box.exec()
+        if box.clickedButton() is btn_open:
+            os.startfile(str(Path(out_root)))
 
     def _export_failed(self, msg):
         self.btn_export.setEnabled(True)

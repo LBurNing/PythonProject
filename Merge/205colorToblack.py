@@ -12,8 +12,8 @@ if len(sys.argv) >= 3:
     print("Release模式\ninput_image_path: ", input_image_path, " output_image_path: ", output_image_path)
 else:
     # 指定输入图像和输出路径
-    input_image_path = r"C:\Users\lihehui\Desktop\9张地图\dt070323W\dt070323W\Maps\map\tiles\New_rxcq2012\New_rxcq2012.png"
-    output_image_path = r"C:\Users\lihehui\Desktop\9张地图\dt070323W\dt070323W\Maps\map\tiles\New_rxcq2012\New_rxcq2012.png"
+    input_image_path = r"C:\Users\lihehui\Desktop\传奇地砖地图 大型地图 传奇3玛法大陆 高清动态地砖 无缝封边\导出结果\武林纷争\武林纷争_截取6000.png"
+    output_image_path = r"C:\Users\lihehui\Desktop\传奇地砖地图 大型地图 传奇3玛法大陆 高清动态地砖 无缝封边\导出结果\武林纷争\武林纷争_截取6000.png"
 
 def replace_color(image_path, output_path, target_color_range=((200, 210), (200, 210), (200, 210)), replacement_color=(0, 0, 0)):
     # 打开图像

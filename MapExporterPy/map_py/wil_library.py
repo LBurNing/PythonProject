@@ -395,9 +395,14 @@ class WilLibrary:
         if w * h < 4:
             return None
         # 判定像素格式:图间距 = 8 + w*h(8bit 调色板)或 8 + w*h*2(16bit RGB565)
-        nxt = self._index_list[index + 1] if index + 1 < self.count else None
+        # 最后一图没有下一图 → 用文件尾判定(数据延伸到 EOF)
+        if index + 1 < self.count:
+            gap = self._index_list[index + 1] - off - 8
+        else:
+            self._wil.seek(0, 2)
+            gap = self._wil.tell() - off - 8
         self._wil.seek(off + 8)
-        if nxt is not None and nxt - off - 8 == w * h * 2:
+        if gap == w * h * 2:
             raw = self._wil.read(w * h * 2)
             if len(raw) < w * h * 2:
                 return None
