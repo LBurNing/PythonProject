@@ -1,0 +1,227 @@
+{
+ "version": 1,
+ "scale": 0.75,
+ "images": {
+  "GUI/Popup/Textures/bg5.png": {
+   "old": "1020x720",
+   "new": "766x540",
+   "scale": 0.75,
+   "date": "2026-10-10 15:07"
+  },
+  "GUI/Popup/Textures/bg_1.png": {
+   "old": "1020x528",
+   "new": "766x396",
+   "scale": 0.75,
+   "date": "2026-10-10 15:07"
+  },
+  "GUI/Popup/Textures/bg_2.png": {
+   "old": "1020x680",
+   "new": "766x510",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/btn_3.png": {
+   "old": "336x104",
+   "new": "252x78",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/btn_add.png": {
+   "old": "92x92",
+   "new": "70x70",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/btn_minus.png": {
+   "old": "92x92",
+   "new": "70x70",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/image_check.png": {
+   "old": "68x68",
+   "new": "52x52",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/input.png": {
+   "old": "72x72",
+   "new": "54x54",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/item_2.png": {
+   "old": "168x180",
+   "new": "126x136",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/item_checkbox.png": {
+   "old": "80x80",
+   "new": "60x60",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/Popup/Textures/item_checkbox1.png": {
+   "old": "80x80",
+   "new": "60x60",
+   "scale": 0.75,
+   "date": "2026-10-10 15:08"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/bg_1.png": {
+   "old": "2356x1340",
+   "new": "1768x1008",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/btn_cz.png": {
+   "old": "552x148",
+   "new": "416x112",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/btnguanbi.png": {
+   "old": "172x172",
+   "new": "132x132",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_d.png": {
+   "old": "188x200",
+   "new": "144x152",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_bpx.png": {
+   "old": "304x100",
+   "new": "228x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_hyf.png": {
+   "old": "396x100",
+   "new": "300x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_mb.png": {
+   "old": "336x272",
+   "new": "252x204",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_nztx.png": {
+   "old": "400x96",
+   "new": "300x72",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_pxz.png": {
+   "old": "296x100",
+   "new": "224x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_qhzs.png": {
+   "old": "392x100",
+   "new": "296x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_qls.png": {
+   "old": "296x100",
+   "new": "224x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_sbys.png": {
+   "old": "380x100",
+   "new": "288x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_swzy.png": {
+   "old": "400x100",
+   "new": "300x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_tnjl.png": {
+   "old": "396x96",
+   "new": "300x72",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_zbz.png": {
+   "old": "300x104",
+   "new": "228x80",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_zhyl.png": {
+   "old": "380x100",
+   "new": "288x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/image_text_zrjf.png": {
+   "old": "400x100",
+   "new": "300x76",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/tab_1.png": {
+   "old": "212x80",
+   "new": "160x60",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/tab_2.png": {
+   "old": "212x80",
+   "new": "160x60",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/tab_3.png": {
+   "old": "212x80",
+   "new": "160x60",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/tab_4.png": {
+   "old": "212x80",
+   "new": "160x60",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/tab_btn_3.png": {
+   "old": "500x144",
+   "new": "376x108",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/Textures/tab_btn_4.png": {
+   "old": "500x144",
+   "new": "376x108",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  },
+  "GUI/ChargeActivity/FirstCharge/UE/开局四连跳.jpg": {
+   "old": "2560x1440",
+   "new": "1920x1080",
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  }
+ },
+ "fonts": {
+  "GUI/ChargeActivity/FirstCharge/Font/FirstChargeAtkFont.fontsettings": {
+   "sheet": "512x256 → 384x192",
+   "chars": 13,
+   "metricLines": 65,
+   "fragments": 13,
+   "fragmentsDone": true,
+   "scale": 0.75,
+   "date": "2026-10-10 15:21"
+  }
+ }
+}

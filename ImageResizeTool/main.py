@@ -1,0 +1,992 @@
+# -*- coding: utf-8 -*-
+"""UI 图片批量缩小工具 —— 核心逻辑与 CLI。
+
+作用:
+  1) 图片: 把美术库 Assets(或界面上指定的任意子目录)下全部 .png/.jpg(含 UE)按 Scale 缩小。
+     规则: 四舍五入 -> 就近取整到 4 的倍数(美术规范本就是 4 的倍数, DXT5/BC3 crunched
+     压缩也要求; 偏差 ≤2, 平局进位); 小图被 4 倍数顶回原值(该维缩不动)时, 该维退让为偶数;
+     九宫格 spriteBorder 同步 ×Scale 取整; 透明边缘用预乘透明度 + 面积平均(BOX);
+     Multiple 图集同样缩放, 并同步 .meta 里每个切片的 rect / border,
+     以及同目录 .tpsheet 的头部尺寸与每行切片坐标(否则 Unity 的 TexturePackerImporter
+     重导 png 时会用旧 .tpsheet 覆盖 .meta, 表现成"缩小后 .meta 没变")。
+  2) 字体美术字: Assets 下全部 *.fontsettings(Assets/Font/ 与各模块 GUI/**/Font/ 下都有)
+     的 图集 png + 像素度量(vert/advance) + 逐字碎图 一起 ×Scale —— 美术字渲染尺寸由
+     烘焙度量决定、不随字号缩放, 不缩会明显偏大; 碎图是重做字体的源, 随包一起缩保持一致
+     (原图在 SVN 历史里, 需要可回退)。
+记录: resize_record.json(图片 + 字体两段), 支持中断续跑/防重复;
+     记录与文件尺寸不符时(如被 svn 还原), 自动按未处理重跑。
+
+用法:
+  python main.py --gui                                          # 打开图形界面
+  python main.py --assets <Assets目录>                          # dry-run: 只预览, 不改文件
+  python main.py --assets <Assets目录> --apply                  # 实际处理图片
+  python main.py --assets <Assets目录> --apply --fonts          # 图片 + 全部字体
+  python main.py --assets <Assets目录> --only-font Charge_Gold  # 只试跑一个字体
+路径可填绝对或相对(相对路径相对 exe/源码目录解析); 默认 ..\\..\\artwork\\gui\\Assets。
+"""
+
+import argparse
+import json
+import re
+import sys
+import time
+from pathlib import Path
+
+from PIL import Image
+
+DEFAULT_SCALE = 0.75
+DEFAULT_ASSETS_REL = "../../artwork/gui/Assets"   # 相对工具目录(exe/源码):
+                                                  # exe 在 E:\huanpi\tools\ImageResizeTool\ → 往回两级到 E:\huanpi\
+IMAGE_EXTS = (".png", ".jpg", ".jpeg")
+EXCLUDE_REL_PREFIXES = ("Base/Editor/", "TextMesh Pro/")   # 编辑器工具图 / TMP 包示例, 不处理
+RECORD_NAME = "resize_record.json"
+
+# .meta 里的九宫格行(只替换这一行, 不重排 YAML)
+BORDER_RE = re.compile(
+    r"(?P<prefix>[ \t]*spriteBorder: \{x: )(?P<x>-?\d+)"
+    r"(?P<g1>, y: )(?P<y>-?\d+)"
+    r"(?P<g2>, z: )(?P<z>-?\d+)"
+    r"(?P<g3>, w: )(?P<w>-?\d+)(?P<suffix>\}[ \t]*$)",
+    re.M,
+)
+
+# .tpsheet(TexturePacker 导出): 头部 "# Sprite sheet: xxx.png (W x H)" 与每行 "name;x;y;w;h;px;py"
+# px/py 是归一化 pivot, 不缩放
+TPSHEET_HEADER_RE = re.compile(r"\((\d+) x (\d+)\)")
+TPSHEET_ROW_RE = re.compile(
+    r"^(?P<name>[^;\r\n]+);(?P<x>-?\d+);(?P<y>-?\d+);(?P<w>-?\d+);(?P<h>-?\d+)"
+    r";(?P<px>[^;\r\n]*);(?P<py>[^;\r\n]*)$",
+    re.M,
+)
+
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
+
+
+# ---------------------------------------------------------------- 基础工具
+
+def base_dir() -> Path:
+    """工具根目录: 打包后 = exe 所在目录; 源码运行 = 本文件目录。"""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def resolve_assets(text: str) -> Path:
+    """把输入的路径解析为绝对路径(相对路径相对工具目录; 支持带引号)。"""
+    p = Path(str(text).strip().strip('"'))
+    if not p.is_absolute():
+        p = base_dir() / p
+    return p
+
+
+def round_half_up(v: float) -> int:
+    """四舍五入(.5 进位; Python 内置 round() 是银行家舍入, 不能用)。"""
+    return int(v + 0.5) if v >= 0 else -int(-v + 0.5)
+
+
+def snap4(v: int) -> int:
+    """就近取整到 4 的倍数(平局进位; 与 Prefab 面板 Snap4 逐值一致, 含负数)。
+
+    DXT5/BC3 crunched 压缩与项目美术规范都要求 4 的倍数; 就近取整偏差 ≤2,
+    比"向上补齐"(余 1 时要 +3) 更贴近 ×Scale 的理论值。
+    """
+    return ((v + 2) // 4) * 4
+
+
+def image_snap(v: float) -> int:
+    """图片尺寸规则: 四舍五入 -> 就近取整到 4 的倍数(偏差 ≤2)。"""
+    return snap4(round_half_up(v))
+
+
+def snap_even(v: float) -> int:
+    """就近取整到 2 的倍数(平局进位); 4 的倍数吸附把尺寸"顶回原值"时的退让规则。"""
+    return round_half_up(v / 2) * 2
+
+
+def _axis_target(old: int, scale: float) -> int:
+    """单维目标尺寸: 优先 4 的倍数; 若吸附后没有变小(小图会被 4 倍数顶回原值), 该维退让为偶数。
+
+    例: 12x8 ×0.75 理论 9x6 → 4 倍数吸附得 8x8(高缩不动) → 高退让为偶数 6 → 8x6。
+    """
+    v4 = image_snap(old * scale)
+    v = v4 if v4 < old else snap_even(old * scale)
+    return max(v, 1)          # 1px 级的图不能变成 0
+
+
+def new_size(w: int, h: int, scale: float):
+    """图片目标尺寸: 四舍五入 -> 就近 4 的倍数; 缩不动的那一维退让为偶数。返回 (new_w, new_h)。"""
+    return _axis_target(w, scale), _axis_target(h, scale)
+
+
+def mod4_target(v: int) -> int:
+    """尺寸取整目标: 非 4 倍数则取最近的 4 的倍数(平局进位; 边长 <4 的极小图不动)。"""
+    return v if v % 4 == 0 else (snap4(v) if v >= 4 else v)
+
+
+def ensure_mod4(path: Path) -> bool:
+    """就地修复"旧规则(补偶数)产生的非 4 倍数尺寸": 取整到最近的 4 的倍数(≤2 像素的微调重采样)。
+
+    返回是否发生修复。
+    """
+    size = read_size(path)
+    if size is None:
+        return False
+    nw, nh = mod4_target(size[0]), mod4_target(size[1])
+    if (nw, nh) == size:
+        return False
+    resize_image_file(path, nw, nh, "box")
+    return True
+
+
+# 缓存: 同一进程内避免重复 IO
+_GUID_CACHE = {}
+_DYN_GUIDS_CACHE = {}
+
+
+def guid_of(path: Path) -> str:
+    """图片的 .meta guid(带缓存)。失败返回空串。"""
+    key = str(path)
+    if key in _GUID_CACHE:
+        return _GUID_CACHE[key]
+    g = ""
+    try:
+        meta = path.with_name(path.name + ".meta")
+        if meta.is_file():
+            head = meta.read_text(encoding="utf-8", errors="ignore")[:400]
+            m = re.search(r"guid: ([0-9a-f]{32})", head)
+            if m:
+                g = m.group(1)
+    except OSError:
+        pass
+    _GUID_CACHE[key] = g
+    return g
+
+
+def dynamic_image_guids(assets: Path) -> set:
+    """DynamicImage 组件引用的图片 guid 集合(并入 UITextureBuildList 登记的 standalone 图)。
+
+    这些图走 tex/{guid}.ab 独立打包; 本集合现在仅用于扫描预览里的 [DynamicImage] 标记
+    (所有图片统一按 4 的倍数规则处理)。
+    """
+    key = str(assets)
+    if key in _DYN_GUIDS_CACHE:
+        return _DYN_GUIDS_CACHE[key]
+    found = set()
+    script = b"c09b680499f170e44aea12acf2d9600c"           # DynamicImage.cs 的脚本 guid
+    pat = re.compile(rb"^\s*guid: ([0-9a-f]{32})\s*$", re.M)
+    # 变体预fab 覆盖 guid 字段的修改 (m_Modifications: propertyPath: guid / value: <图片guid>)
+    mod_pat = re.compile(rb"propertyPath: guid\s*\r?\n\s*value: ([0-9a-f]{32})")
+    for p in assets.rglob("*.prefab"):
+        try:
+            data = p.read_bytes()
+        except OSError:
+            continue
+        if script in data:
+            for block in data.split(b"--- !u!"):
+                if script in block:
+                    found.update(g.decode() for g in pat.findall(block))
+        if b"propertyPath: guid" in data:
+            found.update(m.group(1).decode() for m in mod_pat.finditer(data))
+    build_list = assets / "Base/Editor/UITextureBuildList.asset"
+    if build_list.is_file():
+        try:
+            txt = build_list.read_text(encoding="utf-8", errors="ignore")
+            found.update(re.findall(r"^\s*- ([0-9a-f]{32})\s*$", txt, re.M))
+        except OSError:
+            pass
+    _DYN_GUIDS_CACHE[key] = found
+    return found
+
+
+def fmt_size(w: int, h: int) -> str:
+    return f"{w}x{h}"
+
+
+def _fmt_delta(d: float) -> str:
+    s = f"{d:+.2f}".rstrip("0").rstrip(".")
+    return s
+
+
+def fmt_delta2(raw_w: float, final_w: int, raw_h: float, final_h: int) -> str:
+    """两维修正量文本; 无修正返回空串。例: '（修正 +1, 0）'"""
+    parts = []
+    for raw, final in ((raw_w, final_w), (raw_h, final_h)):
+        d = final - raw
+        parts.append("0" if abs(d) < 1e-4 else _fmt_delta(d))
+    if parts == ["0", "0"]:
+        return ""
+    return f"（修正 {', '.join(parts)}）"
+
+
+def _fmt_num(v: float) -> str:
+    """字体度量数值格式化: 保留来源精度、去掉多余的 0(如 21.0 -> 21)。"""
+    return f"{v:.10g}"
+
+
+def now_str() -> str:
+    return time.strftime("%Y-%m-%d %H:%M")
+
+
+# ---------------------------------------------------------------- 读尺寸
+
+def read_size(path: Path):
+    """只读文件头取像素尺寸: PNG(IHDR) / JPEG(SOF 段)。失败返回 None。"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+            if len(head) < 24:
+                return None
+            if head[:8] == b"\x89PNG\r\n\x1a\n":
+                w = int.from_bytes(head[16:20], "big")
+                h = int.from_bytes(head[20:24], "big")
+                return (w, h)
+            if head[:2] != b"\xff\xd8":
+                return None
+            f.seek(2)
+            while True:
+                b = f.read(1)
+                if not b:
+                    return None
+                if b != b"\xff":
+                    continue
+                marker = f.read(1)
+                while marker == b"\xff":
+                    marker = f.read(1)
+                if not marker:
+                    return None
+                m = marker[0]
+                if m == 0xD9:                       # EOI, 没有长度段
+                    return None
+                if m == 0x01 or 0xD0 <= m <= 0xD7:  # 无长度段
+                    continue
+                lb = f.read(2)
+                if len(lb) < 2:
+                    return None
+                seg_len = int.from_bytes(lb, "big")
+                if 0xC0 <= m <= 0xCF and m not in (0xC4, 0xC8, 0xCC):
+                    data = f.read(5)
+                    if len(data) < 5:
+                        return None
+                    h = int.from_bytes(data[1:3], "big")
+                    w = int.from_bytes(data[3:5], "big")
+                    return (w, h)
+                f.seek(seg_len - 2, 1)
+    except OSError:
+        return None
+
+
+# ---------------------------------------------------------------- 扫描
+
+def _record_base(root: Path) -> Path:
+    """记录/展示 rel 的基准目录: 向上找名为 Assets 的祖先(与既有记录兼容), 找不到就用给定根。
+
+    这样"先扫某个子目录、后扫全库"得到的是同一套记录键, 不会重复处理。
+    """
+    for p in (root, *root.parents):
+        if p.name.lower() == "assets":
+            return p
+    return root
+
+
+def scan_images(assets: Path, folder_filter: str = "", progress=None):
+    """扫描给定根目录下全部可处理图片（递归；根可以是美术库 Assets 或其任意子目录, 含 UE）。
+
+    排除: 字体目录(含 .fontsettings)、Base/Editor 工具图、TextMesh Pro 包示例。
+    返回 [{path, rel, w, h}]; rel 以含 "Assets" 的祖先目录为基准(与既有记录兼容)。
+    """
+    items = []
+    font_dirs = {p.parent for p in assets.rglob("*.fontsettings") if p.is_file()}
+    base = _record_base(assets)
+    for p in assets.rglob("*"):
+        if not p.is_file() or p.suffix.lower() not in IMAGE_EXTS:
+            continue
+        if p.parent in font_dirs:          # 字体目录(图集 + 逐字碎图)由字体流程统一处理
+            continue
+        try:
+            rel = p.relative_to(base).as_posix()
+        except ValueError:
+            rel = p.relative_to(assets).as_posix()
+        if rel.startswith(EXCLUDE_REL_PREFIXES):
+            continue
+        if folder_filter and folder_filter.lower() not in rel.lower():
+            continue
+        size = read_size(p)
+        if size is None:
+            continue
+        items.append({"path": p, "rel": rel, "w": size[0], "h": size[1]})
+        if progress and len(items) % 500 == 0:
+            progress(len(items), 0, f"扫描 {rel}")
+    items.sort(key=lambda it: it["rel"].lower())
+    return items
+
+
+def scan_fonts(assets: Path):
+    """扫描全部美术字字体: Assets 下全部 *.fontsettings（含各模块 GUI/**/Font/ 下的）。
+
+    每项: name(显示名; 重名时附目录)、rel(相对 Assets 路径, 记录与试跑的唯一键)、
+    settings、sheet(同目录同名 .png 图集, 可能缺失)。
+    """
+    found = sorted(p for p in assets.rglob("*.fontsettings") if p.is_file())
+    stem_count = {}
+    for p in found:
+        stem_count[p.stem] = stem_count.get(p.stem, 0) + 1
+
+    base = _record_base(assets)
+    fonts = []
+    for p in found:
+        try:
+            rel = p.relative_to(base).as_posix()
+        except ValueError:
+            rel = p.relative_to(assets).as_posix()
+        name = p.stem
+        if stem_count.get(name, 0) > 1:
+            try:
+                parent_rel = p.parent.relative_to(base).as_posix()
+            except ValueError:
+                parent_rel = p.parent.relative_to(assets).as_posix()
+            name = f"{name} [{parent_rel}]"
+        sheet = p.with_name(p.stem + ".png")
+        fonts.append({
+            "name": name,
+            "rel": rel,
+            "dir": p.parent,
+            "settings": p,
+            "sheet": sheet if sheet.is_file() else None,
+        })
+    return fonts
+
+
+def _read_meta(path: Path):
+    """读图片的 .meta(不存在返回 None)。"""
+    meta = path.with_name(path.name + ".meta")
+    if not meta.is_file():
+        return None, None
+    try:
+        raw = meta.read_bytes()
+    except OSError:
+        return None, None
+    return meta, raw
+
+
+def image_entry_valid(entry, w: int, h: int) -> bool:
+    """记录里的"new"尺寸与当前文件一致 → 视为已处理(未被还原/改动)。"""
+    return entry is not None and entry.get("new") == fmt_size(w, h)
+
+
+def font_entry_sheet_ok(entry, font: dict) -> bool:
+    """记录里的图集新尺寸与当前文件一致; 无图集 / 无法比对时视为一致(不阻断)。"""
+    if entry is None or font["sheet"] is None:
+        return True
+    rec = entry.get("sheet") or ""
+    if "→" not in rec:
+        return True
+    want = rec.rsplit("→", 1)[1].strip()
+    size = read_size(font["sheet"])
+    return size is not None and fmt_size(size[0], size[1]) == want
+
+
+# ---------------------------------------------------------------- 处理: 图片
+
+def resize_image_file(path: Path, new_w: int, new_h: int, algorithm: str = "box") -> None:
+    """就地重采样并回写原文件(路径/文件名不变, Unity 引用不动)。
+
+    透明度先预乘(RGBa 模式)再缩放, 透明边缘不会出现黑边/光晕。
+    """
+    resample = Image.Resampling.LANCZOS if algorithm == "lanczos" else Image.Resampling.BOX
+    with Image.open(path) as im:
+        rgba = im.convert("RGBA")
+        resized = rgba.convert("RGBa").resize((new_w, new_h), resample).convert("RGBA")
+    if path.suffix.lower() in (".jpg", ".jpeg"):
+        resized.convert("RGB").save(path, quality=92)
+    else:
+        resized.save(path)
+
+
+def scale_sprite_border(meta_path: Path, raw: bytes, scale: float):
+    """把 .meta 的 spriteBorder 行各分量 ×scale 取整(只改这一行)。
+
+    返回 (old, new) 元组; 无该行/全零/数值未变时返回 None。
+    """
+    text = raw.decode("utf-8", "ignore")
+    m = BORDER_RE.search(text)
+    if m is None:
+        return None
+    old = tuple(int(m.group(k)) for k in "xyzw")
+    if all(v == 0 for v in old):
+        return None
+    new = tuple(round_half_up(v * scale) for v in old)
+    if new == old:
+        return None
+    line = (f"{m.group('prefix')}{new[0]}{m.group('g1')}{new[1]}"
+            f"{m.group('g2')}{new[2]}{m.group('g3')}{new[3]}{m.group('suffix')}")
+    text = text[:m.start()] + line + text[m.end():]
+    meta_path.write_bytes(text.encode("utf-8"))
+    return old, new
+
+
+# 多切片(Multiple): .meta 里 spriteSheet.sprites[] 每个切片的 rect 块
+SPRITE_RECT_RE = re.compile(
+    r"rect:(?P<v>[ \t]*\n[ \t]*serializedVersion: 2)"
+    r"(?P<kx>[ \t]*\n[ \t]*x: )(?P<x>-?\d+)"
+    r"(?P<ky>[ \t]*\n[ \t]*y: )(?P<y>-?\d+)"
+    r"(?P<kw>[ \t]*\n[ \t]*width: )(?P<w>-?\d+)"
+    r"(?P<kh>[ \t]*\n[ \t]*height: )(?P<h>-?\d+)"
+)
+
+# 切片自带的九宫格边距(注意: 顶层的 spriteBorder 是另一条, 由 scale_sprite_border 处理)
+SPRITE_BORDER_RE = re.compile(
+    r"(?P<prefix>[ \t]*border: \{x: )(?P<x>-?\d+)"
+    r"(?P<g1>, y: )(?P<y>-?\d+)"
+    r"(?P<g2>, z: )(?P<z>-?\d+)"
+    r"(?P<g3>, w: )(?P<w>-?\d+)(?P<suffix>\}[ \t]*$)",
+    re.M,
+)
+
+
+def scale_sprite_rects(meta_path: Path, meta_raw: bytes,
+                       old_w: int, old_h: int, new_w: int, new_h: int) -> int:
+    """Multiple 图集: 把每个切片的 rect(及非零 border) 同步到新图尺寸。
+
+    png 已重采样到 new_w×new_h, 切片 rect 必须跟着缩, 否则整片切图错位。
+    rect 按 (new_w/old_w, new_h/old_h) 分轴缩放后四舍五入, 并夹到新图范围内;
+    逐片独立取整会有 ≤1px 的边界误差(与重采样一致), 需要在 Unity 里验收。
+
+    返回同步的切片数。
+    """
+    text = meta_raw.decode("utf-8", "ignore")
+    rx = new_w / old_w if old_w else 1.0
+    ry = new_h / old_h if old_h else 1.0
+    count = 0
+
+    def _fix_rect(m):
+        nonlocal count
+        x = max(round_half_up(int(m.group("x")) * rx), 0)
+        y = max(round_half_up(int(m.group("y")) * ry), 0)
+        w = min(max(round_half_up(int(m.group("w")) * rx), 1), max(new_w - x, 1))
+        h = min(max(round_half_up(int(m.group("h")) * ry), 1), max(new_h - y, 1))
+        count += 1
+        return (f"rect:{m.group('v')}{m.group('kx')}{x}{m.group('ky')}{y}"
+                f"{m.group('kw')}{w}{m.group('kh')}{h}")
+
+    text = SPRITE_RECT_RE.sub(_fix_rect, text)
+
+    def _fix_border(m):
+        old = tuple(int(m.group(k)) for k in "xyzw")
+        if all(v == 0 for v in old):
+            return m.group(0)
+        new = (round_half_up(old[0] * rx), round_half_up(old[1] * ry),
+               round_half_up(old[2] * rx), round_half_up(old[3] * ry))
+        return (f"{m.group('prefix')}{new[0]}{m.group('g1')}{new[1]}"
+                f"{m.group('g2')}{new[2]}{m.group('g3')}{new[3]}{m.group('suffix')}")
+
+    text = SPRITE_BORDER_RE.sub(_fix_border, text)
+    meta_path.write_bytes(text.encode("utf-8"))
+    return count
+
+
+def scale_tpsheet(tpsheet_path: Path, old_w: int, old_h: int,
+                  new_w: int, new_h: int) -> int:
+    """TexturePacker .tpsheet: 头部尺寸 + 每行切片坐标同步到新图尺寸。
+
+    TexturePackerImporter 托管这张 png(见 Unity 工程 Editor/TexturePackerImporter/
+    SettingsTexturePackerImporter.txt), png 一旦被 Unity 重导, 它会按 .tpsheet 重建 .meta。
+    只改 .meta 而不同步 .tpsheet, 同步好的切片 rect 会在重导时被覆盖回大图坐标 —— 必须一起改。
+
+    行格式 name;x;y;w;h;px;py: x/y/w/h 按 (new_w/old_w, new_h/old_h) 分轴缩放取整并夹到
+    新图范围内(与 scale_sprite_rects 同口径); px/py 是归一化 pivot, 不动。
+    文件不存在返回 0。
+    """
+    if not tpsheet_path.is_file():
+        return 0
+
+    raw = tpsheet_path.read_bytes()
+    nl = "\r\n" if b"\r\n" in raw else "\n"
+    text = raw.decode("utf-8", "ignore").replace("\r\n", "\n").replace("\r", "\n")
+    rx = new_w / old_w if old_w else 1.0
+    ry = new_h / old_h if old_h else 1.0
+
+    text = TPSHEET_HEADER_RE.sub(f"({new_w} x {new_h})", text, count=1)
+
+    count = 0
+
+    def _fix_row(m):
+        nonlocal count
+        x = max(round_half_up(int(m.group("x")) * rx), 0)
+        y = max(round_half_up(int(m.group("y")) * ry), 0)
+        w = min(max(round_half_up(int(m.group("w")) * rx), 1), max(new_w - x, 1))
+        h = min(max(round_half_up(int(m.group("h")) * ry), 1), max(new_h - y, 1))
+        count += 1
+        return (f"{m.group('name')};{x};{y};{w};{h};{m.group('px')};{m.group('py')}")
+
+    text = TPSHEET_ROW_RE.sub(_fix_row, text)
+    tpsheet_path.write_bytes(text.replace("\n", nl).encode("utf-8"))
+    return count
+
+
+def process_images(assets: Path, scale: float, record_path: Path, folder_filter: str = "",
+                   force: bool = False, algorithm: str = "box",
+                   progress=None, should_stop=None):
+    """处理全部未处理图片。返回 (汇总文本, 失败明细列表)。"""
+    record = load_record(record_path)
+    images = scan_images(assets, folder_filter)
+    total = len(images)
+
+    done = already = small = multiple = failed = repaired = redone = sheets = 0
+    fails = []
+    dirty = 0
+
+    for i, it in enumerate(images):
+        if progress:
+            progress(i, total, it["rel"])
+        if should_stop and should_stop():
+            break
+        entry = record["images"].get(it["rel"])
+        if not force and image_entry_valid(entry, it["w"], it["h"]):
+            try:
+                # 已处理的图若还不是 4 的倍数(旧规则补的偶数), 补上
+                if ensure_mod4(it["path"]):
+                    repaired += 1
+                    sz = read_size(it["path"])
+                    if sz:
+                        entry["new"] = fmt_size(sz[0], sz[1])
+                    entry["mod4"] = True
+                    dirty += 1
+                    if dirty >= 10:
+                        record["scale"] = scale
+                        save_record(record_path, record)
+                        dirty = 0
+                else:
+                    already += 1
+            except Exception as e:              # noqa: BLE001
+                failed += 1
+                fails.append(f"{it['rel']} (mod4 修复) :: {type(e).__name__}: {e}")
+            continue
+        # 记录与文件尺寸不符(如被 svn 还原) → 按未处理重新缩放
+        if entry is not None and not force:
+            redone += 1
+
+        try:
+            meta, meta_raw = _read_meta(it["path"])
+            is_multi = bool(meta_raw) and b"spriteMode: 2" in meta_raw
+
+            new_w, new_h = new_size(it["w"], it["h"], scale)
+
+            # 小图统计: 这一维的 4 倍数吸附会顶回原值(缩不动), new_size 已退让为偶数
+            if image_snap(it["w"] * scale) >= it["w"] or image_snap(it["h"] * scale) >= it["h"]:
+                small += 1
+
+            resize_image_file(it["path"], new_w, new_h, algorithm)
+            if meta_raw:
+                if is_multi:      # Multiple 图集: 同步每个切片的 rect/border, 否则整片切图错位
+                    scale_sprite_rects(meta, meta_raw, it["w"], it["h"], new_w, new_h)
+                else:
+                    scale_sprite_border(meta, meta_raw, scale)
+            # .tpsheet 必须和 png/.meta 一起改: TexturePackerImporter 重导 png 时会按它重建 .meta
+            if scale_tpsheet(it["path"].with_suffix(".tpsheet"),
+                             it["w"], it["h"], new_w, new_h):
+                sheets += 1
+
+            record["images"][it["rel"]] = {
+                "old": fmt_size(it["w"], it["h"]),
+                "new": fmt_size(new_w, new_h),
+                "scale": scale,
+                "date": now_str(),
+            }
+            done += 1
+            dirty += 1
+            if dirty >= 10:                                # 定期落盘, 崩溃损失 <= 10 张
+                record["scale"] = scale
+                save_record(record_path, record)
+                dirty = 0
+        except Exception as e:                             # noqa: BLE001
+            failed += 1
+            fails.append(f"{it['rel']} :: {type(e).__name__}: {e}")
+
+    record["scale"] = scale
+    save_record(record_path, record)
+    if progress:
+        progress(total, total, "完成")
+
+    lines = [f"图片处理: 成功 {done}, 记录跳过 {already}, 非4倍数修复 {repaired}, "
+             f"记录不符重缩 {redone}, 小图退让偶数 {small}, 多切片图集 {multiple}, "
+             f"同步 tpsheet {sheets}, 失败 {failed}"]
+    if fails:
+        lines.append("失败明细(前 50):")
+        lines.extend("  " + f for f in fails[:50])
+    return "\n".join(lines), fails
+
+
+# ---------------------------------------------------------------- 处理: 字体
+
+def scale_fontsettings(path: Path, scale: float):
+    """fontsettings 像素度量 ×scale(浮点精确): vert 块的 x/y/width/height 与每字符 advance。
+
+    uv 是归一化坐标, 不动; m_PixelScale / m_LineSpacing 等无量纲值不动。
+    返回 (字形数, 修改行数)。
+    """
+    raw = path.read_bytes()
+    text = raw.decode("utf-8", "ignore")
+    lines = text.split("\n")
+    in_vert = False
+    chars = 0
+    changed = 0
+    vert_keys = ("x:", "y:", "width:", "height:")
+
+    for i, line in enumerate(lines):
+        s = line.strip()
+        eol = "\r" if line.endswith("\r") else ""
+        if s.startswith("uv:"):
+            in_vert = False
+            continue
+        if s.startswith("vert:"):
+            in_vert = True
+            continue
+        if s.startswith("advance:"):
+            try:
+                val = float(s.split(":", 1)[1].strip())
+            except ValueError:
+                in_vert = False
+                continue
+            indent = line[:len(line) - len(line.lstrip())]
+            lines[i] = f"{indent}advance: {_fmt_num(val * scale)}{eol}"
+            chars += 1
+            changed += 1
+            in_vert = False
+            continue
+        if in_vert:
+            key = s.split(":", 1)[0] + ":" if ":" in s else ""
+            if key in vert_keys:
+                try:
+                    val = float(s.split(":", 1)[1].strip())
+                except ValueError:
+                    continue
+                indent = line[:len(line) - len(line.lstrip())]
+                lines[i] = f"{indent}{key} {_fmt_num(val * scale)}{eol}"
+                changed += 1
+            elif not s.startswith("serializedVersion:"):
+                in_vert = False
+
+    if changed:
+        path.write_bytes("\n".join(lines).encode("utf-8"))
+    return chars, changed
+
+
+def ensure_font_mod4(font: dict) -> bool:
+    """字体图集与全部碎图取整到 4 的倍数(幂等)。返回是否有修复。"""
+    changed = False
+    if font["sheet"] is not None and ensure_mod4(font["sheet"]):
+        changed = True
+    stems = {p.stem for p in font["dir"].glob("*.fontsettings")}
+    for p in sorted(font["dir"].glob("*.png")):
+        if p.stem in stems:                 # 图集由上面的步骤处理
+            continue
+        if ensure_mod4(p):
+            changed = True
+    return changed
+
+
+def scale_font_fragments(font: dict, scale: float, algorithm: str = "box") -> int:
+    """字体目录内的逐字碎图(除图集外的全部 .png)按图片规则 ×scale。返回处理张数。
+
+    碎图是重做字体的源(供 FontEditorCs 重新切图); 与图集/度量一起缩, 保持整套一致
+    (原图仍在 SVN 历史里, 需要可回退)。
+    注意: 同目录可能共存多个 fontsettings(各带一张同名图集), **所有**同名图集都要排除,
+    只有真正的碎图参与缩放, 防止图集被不同字体的流程交叉重复缩。
+    """
+    stems = {p.stem for p in font["dir"].glob("*.fontsettings")}
+    count = 0
+    for p in sorted(font["dir"].glob("*.png")):
+        if p.stem in stems:             # 图集(可能多张)由字体流程的图集步骤处理
+            continue
+        size = read_size(p)
+        if size is None:
+            continue
+        new_w, new_h = new_size(size[0], size[1], scale)
+        if new_w >= size[0] or new_h >= size[1]:
+            continue
+        resize_image_file(p, new_w, new_h, algorithm)
+        count += 1
+    return count
+
+
+def process_fonts(assets: Path, scale: float, record_path: Path, only: str = "",
+                  force: bool = False, progress=None, should_stop=None):
+    """处理字体(图集 ×scale 重采样 + fontsettings 度量 ×scale)。返回 (汇总文本, 失败列表)。"""
+    record = load_record(record_path)
+    fonts = scan_fonts(assets)
+    if only:
+        exact = [f for f in fonts if f["rel"] == only or f["name"] == only]
+        fonts = exact if exact else [f for f in fonts if only in f["rel"]]
+        if not fonts:
+            return f"未找到字体: {only}", []
+    total = len(fonts)
+
+    done = already = failed = repaired = 0
+    frags = 0
+    fails = []
+    for i, f in enumerate(fonts):
+        if progress:
+            progress(i, total, f"字体 {f['name']}")
+        if should_stop and should_stop():
+            break
+        entry = record["fonts"].get(f["rel"])
+        if entry is not None and not font_entry_sheet_ok(entry, f):
+            record["fonts"].pop(f["rel"], None)   # 记录与文件不符(如被 svn 还原) → 按全新字体处理
+            entry = None
+        if not force and entry is not None and entry.get("fragmentsDone"):
+            try:
+                if ensure_font_mod4(f):          # 图集/碎图取整到 4 的倍数(幂等)
+                    repaired += 1
+                    entry["mod4"] = True
+                    entry["date"] = now_str()
+                else:
+                    already += 1
+            except Exception as e:               # noqa: BLE001
+                failed += 1
+                fails.append(f"{f['rel']} (mod4 修复) :: {type(e).__name__}: {e}")
+            continue
+        try:
+            if not force and entry is not None:
+                # 旧版本只缩过 图集+度量: 补缩碎图 + 图集取整到 4 的倍数
+                n = scale_font_fragments(f, scale)
+                if f["sheet"] is not None:
+                    ensure_mod4(f["sheet"])
+                entry["fragments"] = n
+                entry["fragmentsDone"] = True
+                entry["mod4"] = True
+                entry["date"] = now_str()
+                frags += n
+                done += 1
+                continue
+            sheet_info = "无图集"
+            if f["sheet"] is not None:
+                with Image.open(f["sheet"]) as im:
+                    w, h = im.size
+                new_w, new_h = new_size(w, h, scale)
+                if new_w < w or new_h < h:
+                    resize_image_file(f["sheet"], new_w, new_h, "box")
+                    sheet_info = f"{fmt_size(w, h)} → {fmt_size(new_w, new_h)}"
+                else:
+                    sheet_info = f"{fmt_size(w, h)}（过小未变）"
+            chars, changed = scale_fontsettings(f["settings"], scale)
+            n = scale_font_fragments(f, scale)
+            frags += n
+            record["fonts"][f["rel"]] = {
+                "sheet": sheet_info,
+                "chars": chars,
+                "metricLines": changed,
+                "fragments": n,
+                "fragmentsDone": True,
+                "scale": scale,
+                "date": now_str(),
+            }
+            done += 1
+        except Exception as e:                             # noqa: BLE001
+            failed += 1
+            fails.append(f"{f['rel']} :: {type(e).__name__}: {e}")
+
+    record["scale"] = scale
+    save_record(record_path, record)
+    if progress:
+        progress(total, total, "完成")
+
+    lines = [f"字体处理: 成功 {done}（碎图共 {frags} 张）, 记录跳过 {already}, "
+             f"非4倍数修复 {repaired}, 失败 {failed}"]
+    if fails:
+        lines.append("失败明细:")
+        lines.extend("  " + f for f in fails)
+    return "\n".join(lines), fails
+
+
+# ---------------------------------------------------------------- 记录
+
+def load_record(path: Path) -> dict:
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                data.setdefault("version", 1)
+                data.setdefault("scale", DEFAULT_SCALE)
+                data.setdefault("images", {})
+                data.setdefault("fonts", {})
+                return data
+        except Exception:                                  # noqa: BLE001
+            pass
+    return {"version": 1, "scale": DEFAULT_SCALE, "images": {}, "fonts": {}}
+
+
+def save_record(path: Path, record: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(record, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- 扫描预览
+
+def build_scan_report(assets: Path, scale: float, record_path: Path,
+                      folder_filter: str = "", progress=None):
+    """扫描并生成预览文本(GUI 卡片 / CLI dry-run 共用)。不修改任何文件。
+
+    返回 (文本, stats)。stats['fonts'] = 字体名列表(供界面下拉)。
+    """
+    record = load_record(record_path)
+    done_set = record["images"]
+    dyn = dynamic_image_guids(assets)
+    images = scan_images(assets, folder_filter, progress=progress)
+    fonts = scan_fonts(assets)
+    total = len(images)
+
+    processed = small = multiple = 0
+    top_count = {}
+    samples = []
+    small_list = []      # 小图退让偶数: (rel, 原尺寸, 新尺寸)
+    multi_list = []      # 多切片图集: rel
+    for idx, it in enumerate(images):
+        if progress and idx % 200 == 0:
+            progress(idx, total, "读取元数据…")
+        meta, meta_raw = _read_meta(it["path"])
+        is_dyn = guid_of(it["path"]) in dyn
+        entry = done_set.get(it["rel"])
+        if image_entry_valid(entry, it["w"], it["h"]):
+            processed += 1
+            # 已处理的图只会"取整到 4 的倍数"(不会重缩), 预览按此展示
+            new_w, new_h = mod4_target(it["w"]), mod4_target(it["h"])
+        else:
+            new_w, new_h = new_size(it["w"], it["h"], scale)
+            # 4 倍数吸附会把这维顶回原值(小图缩不动) → new_size 已退让为偶数
+            if image_snap(it["w"] * scale) >= it["w"] or image_snap(it["h"] * scale) >= it["h"]:
+                small += 1
+                small_list.append((it["rel"], fmt_size(it["w"], it["h"]),
+                                   fmt_size(new_w, new_h)))
+        border_old = None
+        is_multi = False
+        if meta_raw:
+            if b"spriteMode: 2" in meta_raw:
+                is_multi = True
+            else:
+                mm = BORDER_RE.search(meta_raw.decode("utf-8", "ignore"))
+                if mm:
+                    b = tuple(int(mm.group(k)) for k in "xyzw")
+                    if any(b):
+                        border_old = b
+        if is_multi:
+            multiple += 1
+            multi_list.append(it["rel"])
+        top = it["rel"].split("/", 1)[0]
+        top_count[top] = top_count.get(top, 0) + 1
+        if len(samples) < 20:
+            samples.append((it, new_w, new_h, border_old, is_dyn))
+
+    fonts_done = sum(1 for f in fonts
+                     if f["rel"] in record["fonts"] and font_entry_sheet_ok(record["fonts"][f["rel"]], f))
+
+    lines = [f"=== 扫描预览（scale={scale}，未修改任何文件）==="]
+    lines.append(f"图片: 共 {total} 张（已处理 {processed} / 未处理 {total - processed}）；"
+                 f"小图退让偶数 {small}；多切片(Multiple) {multiple}")
+    if total == 0:
+        lines.append("该路径下未发现可处理的图片（.png/.jpg）——请确认选择的是美术库 Assets 目录或其子目录。")
+    if folder_filter:
+        lines.append(f"关键字过滤: “{folder_filter}”")
+    if top_count:
+        parts = [f"{k} {v}" for k, v in sorted(top_count.items(), key=lambda kv: -kv[1])]
+        lines.append("按一级目录: " + "、".join(parts))
+    lines.append(f"字体: 共 {len(fonts)} 个（已处理 {fonts_done} / 未处理 {len(fonts) - fonts_done}）")
+    lines.append("")
+    lines.append("--- 抽样对照（前 20 条，原尺寸 → 缩小后）---")
+    for it, new_w, new_h, border_old, is_dyn in samples:
+        entry = done_set.get(it["rel"])
+        if image_entry_valid(entry, it["w"], it["h"]):
+            tag = "  [已处理·将取整到4的倍数]"
+            if is_dyn:
+                tag += " [DynamicImage]"
+            lines.append(f"{it['rel']}   {fmt_size(it['w'], it['h'])} → {fmt_size(new_w, new_h)}{tag}")
+        else:
+            tag = "  [记录不符·将重缩]" if entry is not None else ""
+            if is_dyn:
+                tag += " [DynamicImage]"
+            lines.append(f"{it['rel']}   {fmt_size(it['w'], it['h'])} → {fmt_size(new_w, new_h)}"
+                         f"{fmt_delta2(it['w'] * scale, new_w, it['h'] * scale, new_h)}{tag}")
+        if border_old:
+            nb = tuple(round_half_up(v * scale) for v in border_old)
+            lines.append(f"    九宫格 {border_old[0]}/{border_old[1]}/{border_old[2]}/{border_old[3]}"
+                         f" → {nb[0]}/{nb[1]}/{nb[2]}/{nb[3]}")
+    if small_list:
+        lines.append("")
+        lines.append(f"--- 小图退让为偶数（4 倍数会顶回原值、缩不动，共 {len(small_list)} 张）---")
+        lines.extend(f"{rel}   {old} → {new}（偶数）" for rel, old, new in small_list)
+    if multi_list:
+        lines.append("")
+        lines.append(f"--- 多切片图集（缩 png + 同步切片 rect，共 {len(multi_list)} 张）---")
+        lines.extend(multi_list)
+    lines.append("")
+    lines.append(f"记录文件: {record_path}")
+
+    stats = {
+        "images_total": total,
+        "images_processed": processed,
+        "small": small,
+        "multiple": multiple,
+        "small_list": small_list,
+        "multiple_list": multi_list,
+        "fonts": [(f["name"], f["rel"]) for f in fonts],
+        "fonts_processed": fonts_done,
+    }
+    return "\n".join(lines), stats
+
+
+# ---------------------------------------------------------------- CLI
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="UI 图片批量缩小工具（美术库图片 + 字体美术字）")
+    ap.add_argument("--gui", action="store_true", help="打开图形界面")
+    ap.add_argument("--assets", default=DEFAULT_ASSETS_REL,
+                    help=f"Assets 目录, 绝对或相对路径（默认 {DEFAULT_ASSETS_REL}）")
+    ap.add_argument("--scale", type=float, default=DEFAULT_SCALE, help="缩放系数（默认 0.75）")
+    ap.add_argument("--apply", action="store_true", help="实际写入；缺省只做 dry-run 预览")
+    ap.add_argument("--folder", default="", help="只处理路径包含该关键字的图片（试跑用）")
+    ap.add_argument("--fonts", action="store_true", help="处理字体美术字（图集 + 度量）")
+    ap.add_argument("--only-font", default="", help="只处理指定名称的字体（试跑，隐含 --fonts）")
+    ap.add_argument("--force", action="store_true", help="忽略记录重跑")
+    ap.add_argument("--algorithm", choices=("box", "lanczos"), default="box", help="重采样算法")
+    args = ap.parse_args(argv)
+
+    if args.gui:
+        import gui
+        return gui.run_gui()
+
+    assets = resolve_assets(args.assets)
+    if not assets.is_dir():
+        print(f"错误: Assets 目录不存在: {assets}")
+        return 2
+    record_path = base_dir() / RECORD_NAME
+    scale = args.scale
+
+    def _prog(cur, total, msg):
+        tail = f"{cur}/{total}" if total else f"{cur}"
+        print(f"\r[{tail}] {msg[:70]:<70}", end="", flush=True)
+
+    if not args.apply:
+        text, _ = build_scan_report(assets, scale, record_path, args.folder, progress=_prog)
+        print("\n" + text)
+        print("\n（dry-run 预览，未修改任何文件；确认后加 --apply 执行）")
+        return 0
+
+    do_images = not args.only_font
+    do_fonts = args.fonts or bool(args.only_font)
+
+    if do_images:
+        summary, _ = process_images(assets, scale, record_path, args.folder,
+                                    args.force, args.algorithm, progress=_prog)
+        print("\n" + summary)
+    if do_fonts:
+        summary, _ = process_fonts(assets, scale, record_path, args.only_font,
+                                   args.force, progress=_prog)
+        print("\n" + summary)
+    print(f"\n记录文件: {record_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
