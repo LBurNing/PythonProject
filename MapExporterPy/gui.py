@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFileDialog,
 
 from main import export_map, scan_libraries
 from map_py.map_parser import MapParseError, MapReader
+from map_py.plist_library import PlistLibrary
 from map_py.renderer import RenderConfig
 from map_py.wil_library import (MLibrary, PakLibrary, PngLibrary,
                                 WilLibrary)
@@ -135,7 +136,7 @@ class MainWindow(QMainWindow):
             lambda: QTimer.singleShot(500, self._update_info))
         file_card.addLayout(_path_row(
             "数据文件夹:", self.edit_data,
-            "包含 .map 与资源(Objects/SmTiles/Tiles 的 PNG/wzl/wil,可在子目录)的文件夹",
+            "包含 .map 与资源(Objects/SmTiles/Tiles 的 PNG/wzl/wil 或 png+plist 图集,可在子目录)的文件夹",
             self._browse_data))
 
         self.edit_out = QLineEdit()
@@ -285,6 +286,8 @@ class MainWindow(QMainWindow):
             for slot, lib in sorted(libs.items()):
                 if isinstance(lib, PngLibrary):
                     kind = "图片目录"
+                elif isinstance(lib, PlistLibrary):
+                    kind = "PNG+PLIST 图集"
                 elif isinstance(lib, WilLibrary):
                     kind = "WIL/WIX"
                 elif isinstance(lib, PakLibrary):

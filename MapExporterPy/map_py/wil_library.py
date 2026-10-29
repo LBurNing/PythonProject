@@ -23,13 +23,29 @@ _IMG_EXTS = (".png", ".jpg", ".bmp")
 
 
 def decode_image_data(raw: bytes, width: int, height: int, is16bit: bool,
-                      is24bit: bool = False) -> np.ndarray:
+                      is24bit: bool = False, is32bit: bool = False) -> np.ndarray:
     """像素数据解码(纯函数)。
 
+    - is32bit:每像素 4 字节 BGRX(32bit 真彩 wil,第 4 字节实测恒 0 为填充)
     - is24bit:每像素 3 字节 BGR(bo16bit=6 的盛大 24bit 格式),数据第一段为底部行
     - is16bit:RGB565(+4bit alpha 平面)
     - 其他:8bit 调色板索引
     """
+    if is32bit:
+        # 32bit BGRX:行序自下而上(与 8bit/24bit 一致),BGR → RGB
+        need = width * height * 4
+        if len(raw) < need:                  # 异常文件:不足部分补 0(黑色 → 透明)
+            raw = raw + b"\x00" * (need - len(raw))
+        px = np.frombuffer(raw, "u1", count=need).reshape(height, width, 4)[::-1]
+        out = np.zeros((height, width, 4), np.uint8)
+        rgb = px[:, :, 2::-1]
+        out[:, :, :3] = rgb
+        if px[:, :, 3].any():                # 第 4 字节有值 → 当 alpha 用
+            out[:, :, 3] = px[:, :, 3]
+        else:                                # 纯填充字节 → BGR 全 0(colorkey 黑)透明
+            out[:, :, 3] = np.where((rgb == 0).all(axis=2), 0, 255)
+        return out
+
     if is24bit:
         # 24bit BGR:行序自下而上(与 C# Bitmap 一致),BGR → RGB
         bgr = np.frombuffer(raw, "u1", count=width * height * 3).reshape(height, width, 3)
@@ -301,12 +317,13 @@ class MLibrary:
 
 
 class WilLibrary:
-    """旧版 .wil/.wix 资源库(8bit 调色板,MirWil.pas 布局,实测验证)。
+    """旧版 .wil/.wix 资源库(MirWil.pas 布局,实测验证)。
 
     - .wix:48 字节头(标题 44 + IndexCount)+ 每 4 字节 Int32 索引
     - .wil:56 字节头(标题 44 + ImageCount@44 + ColorCount@48 + PaletteSize@52)
       + 256 项调色板 @56(BGRX,4 字节/项)+ 图数据 @1080
-    - 每图:TImageInfo 8 字节(W, H, PX, PY)+ w*h 字节 8bit 调色板索引
+    - 每图:TImageInfo 8 字节(W, H, PX, PY)+ 像素数据
+    - 位深由相邻图间距反推:8bit 调色板 / 16bit RGB565 / 32bit BGRX 真彩
     - 行序自下而上(第一段数据 = 底部行);索引 0(黑)= 透明(colorkey 0)
     """
 
@@ -394,7 +411,8 @@ class WilLibrary:
         w, h = hd[0], hd[1]
         if w * h < 4:
             return None
-        # 判定像素格式:图间距 = 8 + w*h(8bit 调色板)或 8 + w*h*2(16bit RGB565)
+        # 判定像素格式:图间距 = 8 + w*h(8bit 调色板)/ 8 + w*h*2(16bit RGB565)
+        # / 8 + w*h*4(32bit BGRX 真彩)
         # 最后一图没有下一图 → 用文件尾判定(数据延伸到 EOF)
         if index + 1 < self.count:
             gap = self._index_list[index + 1] - off - 8
@@ -402,6 +420,11 @@ class WilLibrary:
             self._wil.seek(0, 2)
             gap = self._wil.tell() - off - 8
         self._wil.seek(off + 8)
+        if gap == w * h * 4:
+            raw = self._wil.read(w * h * 4)
+            if len(raw) < w * h * 4:
+                return None
+            return decode_image_data(raw, w, h, False, is32bit=True)
         if gap == w * h * 2:
             raw = self._wil.read(w * h * 2)
             if len(raw) < w * h * 2:

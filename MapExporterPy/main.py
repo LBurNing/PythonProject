@@ -5,25 +5,29 @@
   python main.py --gui                       # 打开图形界面
 
 资源扫描:--lib-dir 下递归查找(子目录中的资源同样识别),按文件名映射槽位:
-  Tiles/SmTiles/Objects(数字后缀可选)→ 槽位 100+偏移+n-1
-  格式:图片目录(PNG/JPG/BMP)优先,其次 wzl/wzx → wil/wix → pak
+  Tiles/SmTiles/Objects/obj 前缀(数字后缀可选)→ 槽位 100+偏移+n-1
+  格式:数字图片目录(PNG/JPG/BMP)优先,其次 png+plist 图集(obj84_0.plist/png …),
+       再 wzl/wzx → wil/wix → pak
 输出(单张完整大图,无 Unity 16384 分块限制):
   {out}/{mapName}/{mapName}.png + 可选动画序列帧
 """
 
 import argparse
+import os
 import re
 import sys
 import time
 from pathlib import Path
 
 from map_py.map_parser import MapReader, MapParseError
+from map_py.plist_library import PlistLibrary
 from map_py.renderer import RenderConfig, Renderer
 from map_py.wil_library import MLibrary, PakLibrary, PngLibrary, WilLibrary, _IMG_EXTS
 
 # 数字后缀可选:经典资源不带数字(Tiles/SmTiles/Objects),扩展资源带数字(Tiles222)
 RES_PATTERNS = [
-    (re.compile(r"^(objects)(\d*)$", re.I), 20),
+    # obj84 / object84 / objects84 都视为 Objects 资源组
+    (re.compile(r"^(objects?|objs?)(\d*)$", re.I), 20),
     (re.compile(r"^(smtiles)(\d*)$", re.I), 10),
     (re.compile(r"^(tiles)(\d*)$", re.I), 0),
 ]
@@ -47,18 +51,24 @@ def slot_of(name: str) -> int | None:
 def _walk_entries(lib_dir: Path, max_depth: int):
     """递归遍历目录树,产出 (depth, dir, files);BFS 浅层优先。
 
-    目录不可读或超出 max_depth 的子树不再深入(避免扫到无关深目录)。"""
-    stack = [(lib_dir, 0)]
+    目录不可读或超出 max_depth 的子树不再深入(避免扫到无关深目录)。
+    用 os.scandir 的目录项缓存判断类型,避免每个文件再做一次 stat ——
+    Windows 上两万文件的目录能省 1 秒以上。"""
+    stack = [(Path(lib_dir), 0)]
     while stack:
         d, depth = stack.pop(0)
         try:
-            children = sorted(d.iterdir(), key=lambda p: p.name.lower())
+            with os.scandir(d) as it:
+                entries = sorted(it, key=lambda e: e.name.lower())
         except OSError:
             continue
         subdirs, files = [], []
-        for c in children:
+        for e in entries:
             try:
-                (subdirs if c.is_dir() else files).append(c)
+                if e.is_dir(follow_symlinks=False):
+                    subdirs.append(Path(e.path))
+                else:
+                    files.append(Path(e.path))
             except OSError:
                 continue
         yield depth, d, files
@@ -67,45 +77,83 @@ def _walk_entries(lib_dir: Path, max_depth: int):
                 stack.append((sd, depth + 1))
 
 
+_PLIST_SHARD_RE = re.compile(r"^(.+)_(\d+)$")     # obj84_0.plist → obj84
+
+
+def _has_numbered_images(files: list[Path]) -> bool:
+    """目录内是否有数字命名图片(00000.png / 00000.PNG …)。"""
+    return any(f.suffix.lower() in _IMG_EXTS and re.match(r"\d+\.", f.name)
+               for f in files)
+
+
 def scan_libraries(lib_dir: str | Path, max_depth: int = MAX_SCAN_DEPTH,
-                   ) -> dict[int, MLibrary | PngLibrary]:
+                   ) -> dict[int, MLibrary | PngLibrary | PlistLibrary]:
     """扫描资源目录(递归),按文件名 → 槽位映射加载资源库。
 
-    逐槽位独立选择:图片目录(PNG/JPG/BMP)优先,缺失槽位再用
+    逐槽位独立选择:数字图片目录优先,其次 png+plist 图集,缺失槽位再用
     wzl/wzx → wil/wix → pak 二进制兜底。子目录中的资源同样识别,
-    同槽位先到先得(浅层优先)。预览与导出共用,规则一致。"""
+    同槽位先到先得(浅层优先)。预览与导出共用,规则一致。
+
+    目录树只遍历一次(五个阶段共用结果),避免大目录被反复扫描。"""
     lib_dir = Path(lib_dir)
-    libs: dict[int, MLibrary | PngLibrary] = {}
+    libs: dict[int, MLibrary | PngLibrary | PlistLibrary] = {}
 
     def add(slot: int, lib) -> None:
         libs.setdefault(slot, lib)          # 浅层优先:已占用槽位不再覆盖
 
-    # 1. 图片目录(png/jpg/bmp,大小写不敏感)优先
-    for _, d, files in _walk_entries(lib_dir, max_depth):
-        if slot_of(d.name) is not None and any(
-                f.suffix.lower() in _IMG_EXTS for f in files):
-            add(slot_of(d.name), PngLibrary(str(d)))
-    # 2. wzl 兜底缺失槽位(24bit,大小写不敏感,真实文件可能是 Objects222.Wzl)
-    for _, _, files in _walk_entries(lib_dir, max_depth):
+    entries = list(_walk_entries(lib_dir, max_depth))
+    wzl: list[Path] = []
+    wil: list[Path] = []
+    pak: list[Path] = []
+    for _, _, files in entries:
         for f in files:
-            if f.suffix.lower() == ".wzl":
-                slot = slot_of(f.stem)
-                if slot is not None:
-                    add(slot, MLibrary(str(f.with_suffix(""))))
-    # 3. wil 兜底(旧版调色板/16bit)
-    for _, _, files in _walk_entries(lib_dir, max_depth):
+            suffix = f.suffix.lower()
+            if suffix == ".wzl":
+                wzl.append(f)
+            elif suffix == ".wil":
+                wil.append(f)
+            elif suffix == ".pak":
+                pak.append(f)
+
+    # 1. 数字图片目录(png/jpg/bmp,大小写不敏感)优先
+    for _, d, files in entries:
+        slot = slot_of(d.name)
+        if slot is not None and _has_numbered_images(files):
+            add(slot, PngLibrary(str(d)))
+    # 2. png+plist 图集(分片 obj84_0.plist / obj84_1.plist 合并为一个资源库)
+    for _, _, files in entries:
+        groups: dict[str, list[Path]] = {}
         for f in files:
-            if f.suffix.lower() == ".wil":
-                slot = slot_of(f.stem)
-                if slot is not None:
-                    add(slot, WilLibrary(str(f.with_suffix(""))))
-    # 4. pak 兜底(GEE 引擎 .GEEPAK3)
-    for _, _, files in _walk_entries(lib_dir, max_depth):
-        for f in files:
-            if f.suffix.lower() == ".pak":
-                slot = slot_of(f.stem)
-                if slot is not None:
-                    add(slot, PakLibrary(str(f.with_suffix(""))))
+            if f.suffix.lower() != ".plist":
+                continue
+            m = _PLIST_SHARD_RE.match(f.stem)
+            base = m.group(1) if m else f.stem
+            if slot_of(base) is not None:
+                groups.setdefault(base, []).append(f)
+        for base, plist_files in groups.items():
+            slot = slot_of(base)
+            if slot is None or slot in libs:   # 数字图片目录已优先占用
+                continue
+            lib = PlistLibrary(plist_files)
+            if lib.count:                   # 缺同名 png 的组不占槽位
+                add(slot, lib)
+            else:
+                lib.close()
+    # 3. wzl 兜底缺失槽位(24bit,大小写不敏感,真实文件可能是 Objects222.Wzl)
+    for f in wzl:
+        slot = slot_of(f.stem)
+        if slot is not None:
+            add(slot, MLibrary(str(f.with_suffix(""))))
+    # 4. wil 兜底(旧版调色板/16bit)
+    for f in wil:
+        slot = slot_of(f.stem)
+        if slot is not None:
+            add(slot, WilLibrary(str(f.with_suffix(""))))
+    # 5. pak 兜底(GEE 引擎 .GEEPAK3)
+    for f in pak:
+        slot = slot_of(f.stem)
+        if slot is not None:
+            add(slot, PakLibrary(str(f.with_suffix(""))))
     return libs
 
 
@@ -164,10 +212,12 @@ def main(argv=None) -> int:
             pass
     parser = argparse.ArgumentParser(
         prog="地图导出工具",
-        description="Mir2 地图二进制(.map + wzl/wzx、wil/wix、pak 资源库)导出为大图 PNG")
+        description="Mir2 地图二进制(.map + 图片目录、png/plist 图集、wzl/wzx、wil/wix、"
+                    "pak 资源库)导出为大图 PNG")
     parser.add_argument("maps", nargs="*", help=".map 文件或目录(可多个)")
     parser.add_argument("--lib-dir", "-l",
-                        help="资源目录(递归扫描 Tiles/SmTiles/Objects 的图片目录或 wzl/wil/pak)")
+                        help="资源目录(递归扫描 Tiles/SmTiles/Objects/obj 的图片目录、"
+                             "png+plist 图集或 wzl/wil/pak)")
     parser.add_argument("--out", "-o", default="output", help="输出根目录(默认 output)")
     parser.add_argument("--gui", action="store_true", help="打开图形界面")
     parser.add_argument("--name", help="导出地图名(默认取 .map 文件名)")

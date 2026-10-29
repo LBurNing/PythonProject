@@ -262,6 +262,44 @@ def test_wil_8bit_decode(tmp_path):
     lib.close()
 
 
+def test_decode_32bit_bgrx():
+    # 32bit BGRX:每像素 4 字节,第 4 字节为填充;行序自下而上
+    raw = bytes([
+        0, 0, 255, 0,      # 底部行左: B=0 G=0 R=255 → 红
+        255, 0, 0, 0,      # 底部行右: B=255 G=0 R=0 → 蓝
+        0, 255, 0, 0,      # 顶部行左: 绿
+        0, 0, 0, 0,        # 顶部行右: 全黑 → 透明
+    ])
+    out = decode_image_data(raw, 2, 2, False, is32bit=True)
+    assert out.shape == (2, 2, 4)
+    np.testing.assert_array_equal(out[1, 0], [255, 0, 0, 255])   # 底部行
+    np.testing.assert_array_equal(out[1, 1], [0, 0, 255, 255])
+    np.testing.assert_array_equal(out[0, 0], [0, 255, 0, 255])   # 顶部行
+    np.testing.assert_array_equal(out[0, 1], [0, 0, 0, 0])       # 黑 = 透明
+
+
+def test_decode_32bit_uses_alpha_when_present():
+    # 第 4 字节有非 0 值时当 alpha 用(而非 colorkey)
+    raw = bytes([0, 0, 255, 128])
+    out = decode_image_data(raw, 1, 1, False, is32bit=True)
+    np.testing.assert_array_equal(out[0, 0], [255, 0, 0, 128])
+
+
+def test_wil_32bit_decode(tmp_path):
+    # 32bit 真彩:图间距 == 8 + w*h*4 → 走 BGRX 分支
+    raw = bytes([0, 0, 255, 0, 255, 0, 0, 0,      # 底部行: 红, 蓝
+                 0, 255, 0, 0, 0, 0, 0, 0])        # 顶部行: 绿, 黑(透明)
+    stem = make_wil_files(tmp_path, [(2, 2, 0, 0, False, raw)])
+    lib = WilLibrary(stem)
+    img = lib.get_image(0)
+    assert img is not None
+    np.testing.assert_array_equal(img[1, 0], [255, 0, 0, 255])
+    np.testing.assert_array_equal(img[1, 1], [0, 0, 255, 255])
+    np.testing.assert_array_equal(img[0, 0], [0, 255, 0, 255])
+    np.testing.assert_array_equal(img[0, 1], [0, 0, 0, 0])
+    lib.close()
+
+
 def test_wil_16bit_decode(tmp_path):
     # 16bit RGB565:图 0 靠"下一图间距 == 8+w*h*2"判定;黑 = 透明,行序翻转
     raw16 = struct.pack("<HHHH", 0xF800, 0x0000, 0x07E0, 0x001F)   # 红/黑/绿/蓝
